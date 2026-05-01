@@ -1,0 +1,449 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Application user accounts (custom auth; password_hash is server-only).
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model User {
+  id                                                        String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email                                                     String                @unique @map("email")
+  password_hash                                             String                @map("password_hash")
+  is_active                                                 Boolean               @default(true) @map("is_active")
+  is_locked                                                 Boolean               @default(false) @map("is_locked")
+  failed_login_attempts                                     Int                   @default(0) @map("failed_login_attempts")
+  last_login_at                                             DateTime?             @map("last_login_at") @db.Timestamptz(6)
+  last_login_ip                                             String?               @map("last_login_ip") @db.Inet
+  last_login_device                                         String?               @map("last_login_device")
+  created_at                                                DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updated_at                                                DateTime              @default(now()) @map("updated_at") @db.Timestamptz(6)
+  employee_documents                                        employee_documents[]
+  leave_transactions_leave_transactions_created_byTousers   leave_transactions[]  @relation("leave_transactions_created_byTousers")
+  leave_transactions_leave_transactions_updated_byTousers   leave_transactions[]  @relation("leave_transactions_updated_byTousers")
+  leave_year_balances_leave_year_balances_created_byTousers leave_year_balances[] @relation("leave_year_balances_created_byTousers")
+  leave_year_balances_leave_year_balances_locked_byTousers  leave_year_balances[] @relation("leave_year_balances_locked_byTousers")
+  leave_year_balances_leave_year_balances_updated_byTousers leave_year_balances[] @relation("leave_year_balances_updated_byTousers")
+  audit_logs                                                LoginAuditLog[]
+  system_audit_logs                                         SystemAuditLog[]
+  profile                                                   UserProfile?
+
+  @@index([email], map: "idx_users_email")
+  @@index([is_active], map: "idx_users_is_active")
+  @@index([created_at(sort: Desc)], map: "idx_users_created_at")
+  @@map("users")
+}
+
+model UserProfile {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id     String     @unique @map("user_id") @db.Uuid
+  full_name   String     @map("full_name")
+  initials    String?    @db.VarChar(5)
+  role        String     @default("Administrator") @map("role")
+  department  String?    @map("department")
+  created_at  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updated_at  DateTime   @default(now()) @map("updated_at") @db.Timestamptz(6)
+  employee_id String?    @db.Uuid
+  employees   employees? @relation(fields: [employee_id], references: [id], onUpdate: NoAction)
+  user        User       @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([employee_id], map: "idx_user_profiles_employee_id")
+  @@index([department], map: "idx_user_profiles_department")
+  @@index([role], map: "idx_user_profiles_role")
+  @@index([user_id], map: "idx_user_profiles_user_id")
+  @@map("user_profiles")
+}
+
+model LoginAuditLog {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id           String?   @map("user_id") @db.Uuid
+  email_attempted   String?
+  action            String    @map("action")
+  success           Boolean   @default(false) @map("success")
+  ip_address        String?   @map("ip_address") @db.Inet
+  device_name       String?   @map("device_name")
+  user_agent        String?   @map("user_agent")
+  failure_reason    String?   @map("failure_reason")
+  created_at        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  archived_at       DateTime? @db.Timestamptz(6)
+  archive_reference String?
+  retention_until   DateTime? @db.Date
+  legal_hold        Boolean   @default(false)
+  user              User?     @relation(fields: [user_id], references: [id], onUpdate: NoAction)
+
+  @@index([action], map: "idx_login_audit_logs_action")
+  @@index([created_at], map: "idx_login_audit_logs_created_at")
+  @@index([email_attempted], map: "idx_login_audit_logs_email_attempted")
+  @@index([user_id], map: "idx_login_audit_logs_user_id")
+  @@index([legal_hold], map: "idx_login_audit_logs_legal_hold")
+  @@index([retention_until], map: "idx_login_audit_logs_retention_until")
+  @@index([success], map: "idx_login_audit_logs_success")
+  @@map("login_audit_logs")
+}
+
+model SystemAuditLog {
+  id                       String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actor_user_id            String?                    @db.Uuid
+  actor_email              String?
+  actor_name               String?
+  module                   String
+  action                   String
+  target_type              String?
+  target_id                String?                    @db.Uuid
+  target_label             String?
+  success                  Boolean                    @default(false)
+  failure_reason           String?
+  ip_address               String?                    @db.Inet
+  device_name              String?
+  user_agent               String?
+  metadata                 Json?
+  created_at               DateTime                   @default(now()) @db.Timestamptz(6)
+  archived_at              DateTime?                  @db.Timestamptz(6)
+  archive_reference        String?
+  retention_until          DateTime?                  @db.Date
+  legal_hold               Boolean                    @default(false)
+  system_audit_log_changes system_audit_log_changes[]
+  actor                    User?                      @relation(fields: [actor_user_id], references: [id], onUpdate: NoAction)
+
+  @@index([action], map: "idx_system_audit_logs_action")
+  @@index([actor_user_id], map: "idx_system_audit_logs_actor_user_id")
+  @@index([created_at], map: "idx_system_audit_logs_created_at")
+  @@index([module], map: "idx_system_audit_logs_module")
+  @@index([success], map: "idx_system_audit_logs_success")
+  @@index([target_type, target_id], map: "idx_system_audit_logs_target")
+  @@index([legal_hold], map: "idx_system_audit_logs_legal_hold")
+  @@index([retention_until], map: "idx_system_audit_logs_retention_until")
+  @@map("system_audit_logs")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model app_settings {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  setting_key   String   @unique
+  setting_value Json
+  description   String?
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime @default(now()) @db.Timestamptz(6)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model contract_allowances {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  contract_id    String    @db.Uuid
+  allowance_type String
+  description    String?
+  amount         Decimal   @default(0) @db.Decimal(12, 2)
+  frequency      String    @default("monthly")
+  start_date     DateTime? @db.Date
+  end_date       DateTime? @db.Date
+  taxable        Boolean   @default(false)
+  notes          String?
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime  @default(now()) @db.Timestamptz(6)
+  contracts      contracts @relation(fields: [contract_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([contract_id], map: "idx_contract_allowances_contract_id")
+  @@index([allowance_type], map: "idx_contract_allowances_type")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model contracts {
+  id                                     String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id                            String                @db.Uuid
+  contract_number                        String?
+  start_date                             DateTime              @db.Date
+  end_date                               DateTime              @db.Date
+  date_received                          DateTime?             @db.Date
+  date_signed                            DateTime?             @db.Date
+  salary                                 Decimal               @default(0) @db.Decimal(12, 2)
+  gratuity                               Decimal               @default(0) @db.Decimal(12, 2)
+  vacation_leave_entitlement             Decimal               @default(0) @db.Decimal(6, 2)
+  sick_leave_entitlement                 Decimal               @default(0) @db.Decimal(6, 2)
+  vacation_rollover_allowed              Boolean               @default(true)
+  sick_rollover_allowed                  Boolean               @default(false)
+  status                                 String                @default("draft")
+  notes                                  String?
+  created_at                             DateTime              @default(now()) @db.Timestamptz(6)
+  updated_at                             DateTime              @default(now()) @db.Timestamptz(6)
+  minute_number                          String?
+  retirement_override_required           Boolean               @default(false)
+  retirement_override_reason             String?
+  retirement_override_approval_reference String?
+  retirement_cutoff_date                 DateTime?             @db.Date
+  contract_allowances                    contract_allowances[]
+  employees                              employees             @relation(fields: [employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  leave_transactions                     leave_transactions[]
+  leave_year_balances                    leave_year_balances[]
+
+  @@index([employee_id], map: "idx_contracts_employee_id")
+  @@index([employee_id, start_date, end_date], map: "idx_contracts_employee_period")
+  @@index([end_date], map: "idx_contracts_end_date")
+  @@index([start_date], map: "idx_contracts_start_date")
+  @@index([status], map: "idx_contracts_status")
+  @@index([minute_number], map: "idx_contracts_minute_number")
+  @@index([contract_number], map: "idx_contracts_contract_number")
+  @@index([contract_number(ops: raw("gin_trgm_ops"))], map: "idx_contracts_contract_number_trgm", type: Gin)
+  @@index([created_at(sort: Desc)], map: "idx_contracts_created_at")
+  @@index([employee_id, created_at(sort: Desc)], map: "idx_contracts_employee_created")
+  @@index([employee_id, start_date, end_date], map: "idx_contracts_employee_dates")
+  @@index([minute_number(ops: raw("gin_trgm_ops"))], map: "idx_contracts_minute_number_trgm", type: Gin)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model employee_addresses {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id         String    @db.Uuid
+  address_type        String
+  address_line_1      String
+  address_line_2      String?
+  community_city      String
+  region_municipality String?
+  country             String    @default("Trinidad and Tobago")
+  postal_code         String?
+  same_as_residential Boolean   @default(false)
+  is_primary          Boolean   @default(false)
+  created_at          DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime  @default(now()) @db.Timestamptz(6)
+  employees           employees @relation(fields: [employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model employee_documents {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id   String    @db.Uuid
+  document_name String
+  document_type String
+  issue_date    DateTime? @db.Date
+  expiry_date   DateTime? @db.Date
+  file_url      String?
+  status        String    @default("uploaded")
+  uploaded_by   String?   @db.Uuid
+  uploaded_at   DateTime  @default(now()) @db.Timestamptz(6)
+  created_at    DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime  @default(now()) @db.Timestamptz(6)
+  employees     employees @relation(fields: [employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users         User?     @relation(fields: [uploaded_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model employee_emergency_contacts {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id        String    @db.Uuid
+  contact_type       String
+  contact_name       String
+  relationship       String
+  mobile_number      String
+  alternative_number String?
+  email              String?
+  address            String?
+  is_primary         Boolean   @default(false)
+  created_at         DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime  @default(now()) @db.Timestamptz(6)
+  employees          employees @relation(fields: [employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model employee_identifications {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id          String    @db.Uuid
+  id_type              String
+  id_number            String
+  normalized_id_number String?   @unique(map: "unique_global_identification_number") @default(dbgenerated("upper(regexp_replace(id_number, '[^A-Za-z0-9]'::text, ''::text, 'g'::text))"))
+  issuing_country      String?   @default("Trinidad and Tobago")
+  issue_date           DateTime? @db.Date
+  expiry_date          DateTime? @db.Date
+  is_primary           Boolean   @default(false)
+  notes                String?
+  created_at           DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime  @default(now()) @db.Timestamptz(6)
+  employees            employees @relation(fields: [employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([id_type, issuing_country, normalized_id_number], map: "unique_employee_identification")
+  @@index([employee_id], map: "idx_employee_identifications_employee_id")
+  @@index([id_type], map: "idx_employee_identifications_id_type")
+  @@index([normalized_id_number], map: "idx_employee_identifications_normalized_id_number")
+  @@index([id_number], map: "idx_employee_identifications_id_number")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model employee_position_history {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id             String    @db.Uuid
+  position                String
+  department              String?
+  work_location           String?
+  start_date              DateTime  @db.Date
+  end_date                DateTime? @db.Date
+  reason_notes            String?
+  related_contract_number String?
+  created_at              DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime  @default(now()) @db.Timestamptz(6)
+  employees               employees @relation(fields: [employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model employee_right_to_work {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id             String    @unique @db.Uuid
+  work_permit_required    Boolean   @default(false)
+  work_permit_number      String?
+  work_permit_expiry_date DateTime? @db.Date
+  immigration_status      String?
+  country_of_citizenship  String?   @default("Trinidad and Tobago")
+  right_to_work_confirmed Boolean   @default(false)
+  created_at              DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime  @default(now()) @db.Timestamptz(6)
+  employees               employees @relation(fields: [employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model employees {
+  id                          String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  file_number                 String                        @unique
+  first_name                  String
+  middle_name                 String?
+  last_name                   String
+  preferred_name              String?
+  gender                      String?
+  date_of_birth               DateTime?                     @db.Date
+  nationality                 String?
+  marital_status              String?
+  personal_email              String?
+  work_email                  String?
+  mobile_number               String?
+  home_number                 String?
+  department                  String?
+  position                    String?
+  employee_category           String?
+  employment_status           String                        @default("active")
+  work_location               String?
+  date_first_engaged          DateTime?                     @db.Date
+  photo_url                   String?
+  created_at                  DateTime                      @default(now()) @db.Timestamptz(6)
+  updated_at                  DateTime                      @default(now()) @db.Timestamptz(6)
+  contracts                   contracts[]
+  employee_addresses          employee_addresses[]
+  employee_documents          employee_documents[]
+  employee_emergency_contacts employee_emergency_contacts[]
+  employee_identifications    employee_identifications[]
+  employee_position_history   employee_position_history[]
+  employee_right_to_work      employee_right_to_work?
+  leave_transactions          leave_transactions[]
+  leave_year_balances         leave_year_balances[]
+  user_profiles               UserProfile[]
+
+  @@index([department], map: "idx_employees_department")
+  @@index([employment_status], map: "idx_employees_employment_status")
+  @@index([file_number], map: "idx_employees_file_number")
+  @@index([first_name], map: "idx_employees_first_name")
+  @@index([last_name], map: "idx_employees_last_name")
+  @@index([position], map: "idx_employees_position")
+  @@index([created_at(sort: Desc)], map: "idx_employees_created_at")
+  @@index([date_of_birth], map: "idx_employees_date_of_birth")
+  @@index([file_number(ops: raw("gin_trgm_ops"))], map: "idx_employees_file_number_trgm", type: Gin)
+  @@index([first_name(ops: raw("gin_trgm_ops"))], map: "idx_employees_first_name_trgm", type: Gin)
+  @@index([gender], map: "idx_employees_gender")
+  @@index([last_name(ops: raw("gin_trgm_ops"))], map: "idx_employees_last_name_trgm", type: Gin)
+  @@index([nationality], map: "idx_employees_nationality")
+  @@index([updated_at(sort: Desc)], map: "idx_employees_updated_at")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model leave_transactions {
+  id                                         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id                                String     @db.Uuid
+  contract_id                                String?    @db.Uuid
+  leave_type                                 String
+  start_date                                 DateTime   @db.Date
+  end_date                                   DateTime   @db.Date
+  return_to_work_date                        DateTime   @db.Date
+  leave_days                                 Decimal    @default(0) @db.Decimal(6, 2)
+  status                                     String     @default("recorded")
+  notes                                      String?
+  created_by                                 String?    @db.Uuid
+  updated_by                                 String?    @db.Uuid
+  created_at                                 DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at                                 DateTime   @default(now()) @db.Timestamptz(6)
+  contracts                                  contracts? @relation(fields: [contract_id], references: [id], onUpdate: NoAction)
+  users_leave_transactions_created_byTousers User?      @relation("leave_transactions_created_byTousers", fields: [created_by], references: [id], onUpdate: NoAction)
+  employees                                  employees  @relation(fields: [employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users_leave_transactions_updated_byTousers User?      @relation("leave_transactions_updated_byTousers", fields: [updated_by], references: [id], onUpdate: NoAction)
+
+  @@index([employee_id], map: "idx_leave_transactions_employee_id")
+  @@index([contract_id], map: "idx_leave_transactions_contract_id")
+  @@index([leave_type], map: "idx_leave_transactions_leave_type")
+  @@index([start_date], map: "idx_leave_transactions_start_date")
+  @@index([status], map: "idx_leave_transactions_status")
+  @@index([created_at(sort: Desc)], map: "idx_leave_transactions_created_at")
+  @@index([employee_id, contract_id, start_date, end_date], map: "idx_leave_transactions_employee_contract_dates")
+  @@index([end_date], map: "idx_leave_transactions_end_date")
+  @@index([start_date, end_date, status], map: "idx_leave_transactions_today_lookup")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model system_audit_log_changes {
+  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  audit_log_id      String         @db.Uuid
+  change_type       String
+  field_name        String?
+  field_label       String?
+  before_value      Json?
+  after_value       Json?
+  value_format      String?        @default("text")
+  created_at        DateTime       @default(now()) @db.Timestamptz(6)
+  system_audit_logs SystemAuditLog @relation(fields: [audit_log_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([audit_log_id], map: "idx_system_audit_log_changes_audit_log_id")
+  @@index([change_type], map: "idx_system_audit_log_changes_change_type")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model leave_year_balances {
+  id                                          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id                                 String    @db.Uuid
+  contract_id                                 String    @db.Uuid
+  contract_year_number                        Int
+  year_start_date                             DateTime  @db.Date
+  year_end_date                               DateTime  @db.Date
+  leave_type                                  String
+  entitlement                                 Decimal   @default(0) @db.Decimal(6, 2)
+  rollover_in                                 Decimal   @default(0) @db.Decimal(6, 2)
+  used                                        Decimal   @default(0) @db.Decimal(6, 2)
+  remaining                                   Decimal   @default(0) @db.Decimal(6, 2)
+  adjustment                                  Decimal   @default(0) @db.Decimal(6, 2)
+  adjustment_reason                           String?
+  locked                                      Boolean   @default(false)
+  locked_at                                   DateTime? @db.Timestamptz(6)
+  locked_by                                   String?   @db.Uuid
+  created_by                                  String?   @db.Uuid
+  updated_by                                  String?   @db.Uuid
+  created_at                                  DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at                                  DateTime  @default(now()) @db.Timestamptz(6)
+  contracts                                   contracts @relation(fields: [contract_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users_leave_year_balances_created_byTousers User?     @relation("leave_year_balances_created_byTousers", fields: [created_by], references: [id], onUpdate: NoAction)
+  employees                                   employees @relation(fields: [employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users_leave_year_balances_locked_byTousers  User?     @relation("leave_year_balances_locked_byTousers", fields: [locked_by], references: [id], onUpdate: NoAction)
+  users_leave_year_balances_updated_byTousers User?     @relation("leave_year_balances_updated_byTousers", fields: [updated_by], references: [id], onUpdate: NoAction)
+
+  @@unique([employee_id, contract_id, contract_year_number, leave_type], map: "leave_year_balances_unique")
+  @@index([contract_id], map: "idx_leave_year_balances_contract_id")
+  @@index([employee_id], map: "idx_leave_year_balances_employee_id")
+  @@index([leave_type], map: "idx_leave_year_balances_leave_type")
+  @@index([locked], map: "idx_leave_year_balances_locked")
+  @@index([year_start_date, year_end_date], map: "idx_leave_year_balances_year_dates")
+  @@index([employee_id, contract_id], map: "idx_leave_year_balances_employee_contract")
+  @@index([contract_year_number], map: "idx_leave_year_balances_year")
+}

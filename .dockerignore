@@ -1,0 +1,15 @@
+node_modules
+.next
+.env
+.env.local
+.env.production
+.env.development
+.git
+.gitignore
+Dockerfile
+docker-compose.yml
+database/backup/*.dump
+database/backup/*.sql
+npm-debug.log
+README-INSTALL.md
+*.zip

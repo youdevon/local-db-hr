@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: local-db-hr-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-local_db_hr}
+      POSTGRES_USER: ${POSTGRES_USER:-local_db_hr_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_this_password}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - local_db_hr_postgres_data:/var/lib/postgresql/data
+      - ./database/backup:/backup
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-local_db_hr_user} -d ${POSTGRES_DB:-local_db_hr}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: local-db-hr-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-v0.8.1-beta}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-local_db_hr_user}:${POSTGRES_PASSWORD:-change_this_password}@db:5432/${POSTGRES_DB:-local_db_hr}?schema=public
+      AUTH_SECRET: ${AUTH_SECRET:-change_this_auth_secret}
+      SESSION_SECRET: ${SESSION_SECRET:-local-db-hr-session-secret-2026-minimum-32chars}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+    ports:
+      - "${APP_PORT:-3000}:3000"
+
+volumes:
+  local_db_hr_postgres_data:

@@ -1,0 +1,70 @@
+DB-HR Ubuntu Server Deployment Notes
+
+Working deployment tested on Ubuntu Server at:
+http://192.168.40.6:3000
+
+Version recommendation:
+v0.8.2-beta
+
+Key fixes included in this working backup:
+
+1. Dockerfile Prisma fix
+- Prisma schema must be copied before npm ci.
+- Required line:
+  COPY prisma ./prisma
+
+2. Session cookie fix for internal HTTP
+- File:
+  src/lib/session.ts
+- Required setting:
+  secure: false
+- Do not use:
+  secure: process.env.NODE_ENV === "production"
+- Reason:
+  In Docker production mode, that becomes secure: true. Because this app is running on plain HTTP internally, the browser will not send the secure cookie. Login may appear successful, but navigating redirects back to login.
+
+3. SESSION_SECRET fix
+- SESSION_SECRET must be at least 32 characters.
+- docker-compose.yml must pass SESSION_SECRET from .env.
+- Confirm with:
+  docker exec -it local-db-hr-app env | grep SESSION
+
+4. pgcrypto login fix
+- pgcrypto was installed under the extensions schema.
+- The login query expects crypt().
+- Public wrapper functions were created:
+  public.crypt(text, text)
+  public.gen_salt(text)
+
+5. Admin reset used during deployment
+- Email:
+  admin@admin.com
+- Temporary password:
+  Admin123!
+- Change this after deployment if required.
+
+6. Docker restart policy
+- Containers should use:
+  restart: unless-stopped
+- Docker should be enabled on boot:
+  sudo systemctl enable docker
+  sudo systemctl enable containerd
+
+7. SSH auto-start
+- Confirmed:
+  systemctl is-enabled ssh
+  Result: enabled
+
+8. Access URL
+- Current working URL:
+  http://192.168.40.6:3000
+
+9. Database restore user
+- Database container:
+  local-db-hr-postgres
+- Database:
+  local_db_hr
+- User:
+  local_db_hr_user
+- Restore command:
+  docker exec -i local-db-hr-postgres psql -U local_db_hr_user -d local_db_hr < backups/database/hr-db-backup.sql

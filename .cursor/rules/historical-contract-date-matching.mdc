@@ -1,0 +1,13 @@
+---
+description: Enforce historical contract and date-based matching across features
+alwaysApply: true
+---
+
+# Historical Contract + Date-Based Matching
+
+- Treat historical contracts as first-class records. Never hide or exclude old contracts unless a feature explicitly requests current-only data.
+- For leave and any contract-linked timelines, match by date range against the relevant contract period, not by latest/current contract defaults.
+- If `contract_id` is missing on older records, use deterministic date-based fallback matching (`employee_id` + date within contract period).
+- Preserve contract history in detail views, profile context, calculations, reports, exports, and audit metadata.
+- Keep overlap validation date-based against all contracts (past/current/future), using effective end date when available, otherwise `end_date`.
+- For new features, default ordering should keep history visible and predictable: current first where relevant, then future, then historical newest-first.
