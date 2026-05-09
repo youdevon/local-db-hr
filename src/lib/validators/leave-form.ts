@@ -12,7 +12,9 @@ export const leaveFormSchema = z
     startDate: z.string().min(1),
     endDate: z.string().min(1),
     returnToWorkDate: z.string().min(1),
-    leaveDays: z.coerce.number().int().min(1),
+    leaveDays: z.coerce.number().int().min(1).max(999),
+    /** Optional — logged when leave days differ from auto-calculated working days */
+    leaveDaysAdjustmentReason: z.string().optional(),
     notes: z.string().optional(),
   })
   .superRefine((value, ctx) => {

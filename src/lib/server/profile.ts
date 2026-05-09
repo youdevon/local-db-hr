@@ -2,12 +2,9 @@ import "server-only";
 
 import { Prisma } from "@prisma/client";
 
-import {
-  calculateInclusiveLeaveDays,
-  formatDateLabel,
-  formatLeaveDays,
-  getLeaveTypeLabel,
-} from "@/lib/leave";
+import { calculateWorkingLeaveDays } from "@/lib/leave-days";
+import { formatDateLabel, formatLeaveDays, getLeaveTypeLabel } from "@/lib/leave";
+import { getPublicHolidaySetForRange } from "@/lib/server/public-holidays";
 import { contractMonthsBetween, calculateGratuity, defaultGratuitySettings } from "@/lib/gratuity-settings";
 import { formatCurrencyTTD } from "@/lib/mock/contracts";
 import { prisma } from "@/lib/prisma";
@@ -345,19 +342,34 @@ export async function getProfileDataForUser(
     LIMIT 3
   `);
 
+  let holidaySetRecent = new Set<string>();
+  if (txRows.length > 0) {
+    let minIso = toIsoDate(txRows[0].start_date);
+    let maxIso = toIsoDate(txRows[0].end_date);
+    for (const tx of txRows) {
+      const s = toIsoDate(tx.start_date);
+      const e = toIsoDate(tx.end_date);
+      if (s < minIso) minIso = s;
+      if (e > maxIso) maxIso = e;
+    }
+    holidaySetRecent = await getPublicHolidaySetForRange(minIso, maxIso);
+  }
+
   base.hasMoreLeaveTransactions = false;
-  base.recentLeaveTransactions = txRows.map((tx) => ({
-    id: tx.id,
-    leaveType: getLeaveTypeLabel(tx.leave_type),
-    startDate: formatDateLabel(toIsoDate(tx.start_date)),
-    endDate: formatDateLabel(toIsoDate(tx.end_date)),
-    returnToWorkDate: formatDateLabel(toIsoDate(tx.return_to_work_date)),
-    daysUsed:
-      Math.round(Number(tx.leave_days ?? 0)) > 0
-        ? formatLeaveDays(Math.round(Number(tx.leave_days ?? 0)))
-        : formatLeaveDays(calculateInclusiveLeaveDays(tx.start_date, tx.end_date)),
-    status: normalizeStatus(tx.status),
-  }));
+  base.recentLeaveTransactions = txRows.map((tx) => {
+    const stored = Math.round(Number(tx.leave_days ?? 0));
+    const days =
+      stored > 0 ? stored : calculateWorkingLeaveDays(tx.start_date, tx.end_date, holidaySetRecent);
+    return {
+      id: tx.id,
+      leaveType: getLeaveTypeLabel(tx.leave_type),
+      startDate: formatDateLabel(toIsoDate(tx.start_date)),
+      endDate: formatDateLabel(toIsoDate(tx.end_date)),
+      returnToWorkDate: formatDateLabel(toIsoDate(tx.return_to_work_date)),
+      daysUsed: formatLeaveDays(days),
+      status: normalizeStatus(tx.status),
+    };
+  });
 
   return base;
 }

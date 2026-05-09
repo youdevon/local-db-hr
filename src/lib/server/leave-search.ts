@@ -3,7 +3,9 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 
 import { getLeaveStatus } from "@/lib/leave-balances";
-import { calculateInclusiveLeaveDays, formatContractPeriod, formatLeaveDays } from "@/lib/leave";
+import { calculateWorkingLeaveDays } from "@/lib/leave-days";
+import { formatContractPeriod, formatLeaveDays } from "@/lib/leave";
+import { getPublicHolidaySetForRange } from "@/lib/server/public-holidays";
 import { generateContractYears } from "@/lib/leave-contract-years";
 import { getLeaveWarningSettings } from "@/lib/leave-warning-settings";
 import { prisma } from "@/lib/prisma";
@@ -52,12 +54,6 @@ function shouldCountStatus(status: string | null | undefined): boolean {
   if (!status) return true;
   const normalized = status.trim().toLowerCase();
   return normalized === "recorded" || normalized === "approved" || normalized === "adjusted";
-}
-
-function txDays(tx: LeaveTxRow): number {
-  const stored = Number(tx.leave_days ?? 0);
-  if (Number.isFinite(stored) && stored > 0) return Math.round(stored);
-  return calculateInclusiveLeaveDays(tx.start_date, tx.end_date);
 }
 
 function pickCurrentOrLatestContract(contracts: ContractRow[]): ContractRow | null {
@@ -114,6 +110,25 @@ export async function getLeaveSearchRowsFromDatabase(): Promise<LeaveSearchRow[]
       FROM public.employee_identifications
     `),
   ]);
+
+  let holidayMin = "";
+  let holidayMax = "";
+  for (const tx of transactions) {
+    const s = iso(tx.start_date);
+    const e = iso(tx.end_date);
+    if (!holidayMin || s < holidayMin) holidayMin = s;
+    if (!holidayMax || e > holidayMax) holidayMax = e;
+  }
+  const holidaySetAll =
+    transactions.length > 0 && holidayMin && holidayMax
+      ? await getPublicHolidaySetForRange(holidayMin, holidayMax)
+      : new Set<string>();
+
+  function txDays(tx: LeaveTxRow): number {
+    const stored = Number(tx.leave_days ?? 0);
+    if (Number.isFinite(stored) && stored > 0) return Math.round(stored);
+    return calculateWorkingLeaveDays(tx.start_date, tx.end_date, holidaySetAll);
+  }
 
   const contractsByEmployee = new Map<string, ContractRow[]>();
   contracts.forEach((contract) => {

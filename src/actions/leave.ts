@@ -21,11 +21,12 @@ import {
 } from "@/lib/leave-balances";
 import {
   buildLeavePeriodLabelForToast,
-  calculateInclusiveLeaveDays,
   formatLeaveRecordedSuccessMessage,
   getLeaveTypeLabel,
   type LeaveTransactionSummary,
 } from "@/lib/leave";
+import { calculateWorkingLeaveDays } from "@/lib/leave-days";
+import { getPublicHolidaySetForRange } from "@/lib/server/public-holidays";
 import { ensureLeaveInfrastructure } from "@/lib/leave-infrastructure";
 import { LOGIN_SESSION_EXPIRED_HREF } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
@@ -63,6 +64,50 @@ type AuditChange = {
   after?: unknown;
   format?: "text" | "date" | "number";
 };
+
+async function auditLeaveDaysManualAdjustment(params: {
+  actorUserId: string | null;
+  actorEmail: string | null;
+  actorName: string | null;
+  employeeId: string;
+  employeeName: string;
+  leaveType: string;
+  startDate: string;
+  endDate: string;
+  autoCalculatedDays: number;
+  submittedDays: number;
+  adjustmentReason?: string | null;
+  leaveId?: string | null;
+  ip: string | null;
+  deviceLabel: string | null;
+  userAgent: string | null;
+}) {
+  if (params.submittedDays === params.autoCalculatedDays) return;
+  await createSystemAuditLog({
+    actorUserId: params.actorUserId,
+    actorEmail: params.actorEmail,
+    actorName: params.actorName,
+    module: "Leave",
+    action: "leave_days_manual_adjustment",
+    targetType: "leave",
+    targetId: params.leaveId ?? null,
+    targetLabel: `Leave: ${params.employeeName}`,
+    success: true,
+    ipAddress: params.ip,
+    deviceName: params.deviceLabel,
+    userAgent: params.userAgent,
+    metadata: {
+      employeeId: params.employeeId,
+      employeeName: params.employeeName,
+      leaveType: params.leaveType,
+      startDate: params.startDate,
+      endDate: params.endDate,
+      autoCalculatedDays: params.autoCalculatedDays,
+      manualLeaveDays: params.submittedDays,
+      adjustmentReason: params.adjustmentReason?.trim() || null,
+    },
+  });
+}
 
 function toDate(value: string): Date {
   return new Date(`${value}T00:00:00`);
@@ -233,10 +278,13 @@ export async function createLeaveAction(input: LeaveFormValues): Promise<LeaveAc
     return { success: false, message: "Return to work date must be after the leave end date." };
   }
 
-  const requestedDays = Math.round(Number(data.leaveDays || calculateInclusiveLeaveDays(data.startDate, data.endDate)));
-  if (requestedDays < 1) {
-    return { success: false, message: "Leave period must be at least one day." };
+  const holidaySet = await getPublicHolidaySetForRange(data.startDate, data.endDate);
+  const autoCalculatedDays = calculateWorkingLeaveDays(data.startDate, data.endDate, holidaySet);
+  const submittedDays = Math.round(Number(data.leaveDays));
+  if (!Number.isFinite(submittedDays) || submittedDays < 1) {
+    return { success: false, message: "Leave days must be at least 1." };
   }
+  const requestedDays = submittedDays;
 
   try {
     const created = await prisma.$transaction(async (tx) => {
@@ -388,9 +436,28 @@ export async function createLeaveAction(input: LeaveFormValues): Promise<LeaveAc
         employeeName: created.employeeName,
         leaveType: data.leaveType,
         daysTaken: requestedDays,
+        autoCalculatedWorkingDays: autoCalculatedDays,
         period: leaveSummary.periodLabel,
         remainingBalanceAfter: leaveSummary.remainingDays,
       },
+    });
+
+    await auditLeaveDaysManualAdjustment({
+      actorUserId,
+      actorEmail: actorUser?.email ?? null,
+      actorName: actorUser?.name ?? null,
+      employeeId: data.employeeId,
+      employeeName: created.employeeName,
+      leaveType: data.leaveType,
+      startDate: data.startDate,
+      endDate: data.endDate,
+      autoCalculatedDays,
+      submittedDays: requestedDays,
+      adjustmentReason: data.leaveDaysAdjustmentReason,
+      leaveId: created.leaveId ?? null,
+      ip,
+      deviceLabel,
+      userAgent,
     });
 
     const emailFollowUp = await trySendLeaveTakenRecordedEmail({
@@ -466,8 +533,15 @@ export async function updateLeaveTransactionAction(
     return { success: false, message: "Please complete all required leave fields." };
   }
   const data = parsed.data;
-  const requestedDays = Math.round(Number(data.leaveDays || calculateInclusiveLeaveDays(data.startDate, data.endDate)));
-  if (requestedDays < 1) return { success: false, message: "Leave period must be at least one day." };
+
+  const holidaySetUpdate = await getPublicHolidaySetForRange(data.startDate, data.endDate);
+  const autoCalculatedDaysUpdate = calculateWorkingLeaveDays(data.startDate, data.endDate, holidaySetUpdate);
+  const submittedDaysUpdate = Math.round(Number(data.leaveDays));
+  if (!Number.isFinite(submittedDaysUpdate) || submittedDaysUpdate < 1) {
+    return { success: false, message: "Leave days must be at least 1." };
+  }
+  const requestedDays = submittedDaysUpdate;
+
   if (toDate(data.endDate) < toDate(data.startDate)) {
     return { success: false, message: "Leave end date must be on or after the start date." };
   }
@@ -731,9 +805,28 @@ export async function updateLeaveTransactionAction(
         employeeName: result.employeeName,
         leaveType: data.leaveType,
         daysTaken: requestedDays,
+        autoCalculatedWorkingDays: autoCalculatedDaysUpdate,
         period: leaveSummary.periodLabel,
         remainingBalanceAfter: leaveSummary.remainingDays,
       },
+    });
+
+    await auditLeaveDaysManualAdjustment({
+      actorUserId,
+      actorEmail: actorUser?.email ?? null,
+      actorName: actorUser?.name ?? null,
+      employeeId: result.employeeId,
+      employeeName: result.employeeName,
+      leaveType: data.leaveType,
+      startDate: data.startDate,
+      endDate: data.endDate,
+      autoCalculatedDays: autoCalculatedDaysUpdate,
+      submittedDays: requestedDays,
+      adjustmentReason: data.leaveDaysAdjustmentReason,
+      leaveId: result.id,
+      ip,
+      deviceLabel,
+      userAgent,
     });
 
     await sendHrNotification({

@@ -16,7 +16,8 @@ export const metadata: Metadata = {
 export default async function SettingsPage() {
   const session = await getSession();
   const role = normalizeUserRole(session.user?.role);
-  const showLicenseCard = role === "administrator";
+  const showAdminSettingsCards = role === "administrator";
+  const showLicenseCard = showAdminSettingsCards;
   const license = showLicenseCard ? await getLicenseStatus() : null;
 
   const licenseSummary = !license
@@ -148,6 +149,30 @@ export default async function SettingsPage() {
             <ChevronRight className="text-muted-foreground mt-0.5 h-4 w-4 shrink-0 transition group-hover:translate-x-0.5 group-hover:text-blue-600 dark:group-hover:text-blue-400" />
           </div>
         </Link>
+
+        {showAdminSettingsCards ? (
+          <Link
+            href="/settings/public-holidays"
+            className={cn(
+              "group block rounded-xl border border-border bg-card p-5",
+              "shadow-[0_6px_18px_rgba(15,23,42,0.08)] transition-[transform,box-shadow,border-color] duration-200",
+              "hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-[0_10px_24px_rgba(15,23,42,0.12)]",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2",
+              "dark:hover:border-neutral-700 dark:focus-visible:ring-offset-neutral-950 dark:shadow-[0_6px_18px_rgba(0,0,0,0.35)]",
+            )}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h3 className="text-foreground text-sm font-semibold">Public Holidays</h3>
+                <p className="text-muted-foreground mt-1 text-sm">
+                  Maintain Trinidad and Tobago public holidays used when calculating working-day leave (weekends excluded
+                  automatically).
+                </p>
+              </div>
+              <ChevronRight className="text-muted-foreground mt-0.5 h-4 w-4 shrink-0 transition group-hover:translate-x-0.5 group-hover:text-blue-600 dark:group-hover:text-blue-400" />
+            </div>
+          </Link>
+        ) : null}
 
         <Link
           href="/settings/leave-warning"

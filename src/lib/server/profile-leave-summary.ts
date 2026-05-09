@@ -3,7 +3,9 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 
 import { getLeaveStatus, type LeaveStatus } from "@/lib/leave-balances";
-import { calculateInclusiveLeaveDays, formatDateLabel, formatLeaveDays } from "@/lib/leave";
+import { calculateWorkingLeaveDays } from "@/lib/leave-days";
+import { formatDateLabel, formatLeaveDays } from "@/lib/leave";
+import { getPublicHolidaySetForRange } from "@/lib/server/public-holidays";
 import { generateContractYears } from "@/lib/leave-contract-years";
 import { getLeaveWarningSettings } from "@/lib/leave-warning-settings";
 import { prisma } from "@/lib/prisma";
@@ -53,12 +55,6 @@ function shouldCountStatus(status: string | null | undefined): boolean {
   return normalized === "recorded" || normalized === "approved" || normalized === "adjusted";
 }
 
-function txDays(tx: LeaveTx): number {
-  const stored = Math.round(Number(tx.leave_days ?? 0));
-  if (stored > 0) return stored;
-  return calculateInclusiveLeaveDays(tx.start_date, tx.end_date);
-}
-
 function buildContractYears(contract: ContractCore) {
   return generateContractYears(contract.startDate, contract.endDate);
 }
@@ -88,16 +84,24 @@ function txForContractYear(transactions: LeaveTx[], contractId: string, startDat
   });
 }
 
-function sumUsed(rows: LeaveTx[], leaveTypes: string[]): number {
+function sumUsed(rows: LeaveTx[], leaveTypes: string[], daysForTx: (tx: LeaveTx) => number): number {
   return rows
     .filter((row) => leaveTypes.includes(row.leave_type))
-    .reduce((sum, row) => sum + txDays(row), 0);
+    .reduce((sum, row) => sum + daysForTx(row), 0);
 }
 
 export async function getProfileLeaveSummaryForContract(
   employeeId: string,
   contract: ContractCore,
 ): Promise<ProfileLeaveSummary | null> {
+  const holidaySet = await getPublicHolidaySetForRange(contract.startDate, contract.endDate);
+
+  const daysForTx = (tx: LeaveTx): number => {
+    const stored = Math.round(Number(tx.leave_days ?? 0));
+    if (stored > 0) return stored;
+    return calculateWorkingLeaveDays(tx.start_date, tx.end_date, holidaySet);
+  };
+
   const [settings, balances, txRows] = await Promise.all([
     getLeaveWarningSettings(),
     getLeaveYearBalances(employeeId, contract.id),
@@ -122,10 +126,10 @@ export async function getProfileLeaveSummaryForContract(
   const contractYearLabel = `${formatDateLabel(selectedYear.startDate)} – ${formatDateLabel(selectedYear.endDate)}`;
   const selectedYearTx = txForContractYear(txRows, contract.id, selectedYear.startDate, selectedYear.endDate);
 
-  const vacationUsed = sumUsed(selectedYearTx, ["vacation"]);
-  const casualUsed = sumUsed(selectedYearTx, ["casual"]);
+  const vacationUsed = sumUsed(selectedYearTx, ["vacation"], daysForTx);
+  const casualUsed = sumUsed(selectedYearTx, ["casual"], daysForTx);
   const vacationTotalUsed = Math.round(vacationUsed + casualUsed);
-  const sickUsed = Math.round(sumUsed(selectedYearTx, ["sick"]));
+  const sickUsed = Math.round(sumUsed(selectedYearTx, ["sick"], daysForTx));
 
   const vacationStored = balances.find(
     (row) => row.contract_year_number === selectedYear.yearNumber && row.leave_type === "vacation",
@@ -145,7 +149,7 @@ export async function getProfileLeaveSummaryForContract(
     let runningRollover = 0;
     for (const year of years) {
       const yearTx = txForContractYear(txRows, contract.id, year.startDate, year.endDate);
-      const yearVacationUsed = Math.round(sumUsed(yearTx, ["vacation", "casual"]));
+      const yearVacationUsed = Math.round(sumUsed(yearTx, ["vacation", "casual"], daysForTx));
       const yearAvailable = Math.round(contract.vacationEntitlement + runningRollover);
       const yearRemaining = Math.round(yearAvailable - yearVacationUsed);
       if (year.yearNumber === selectedYear.yearNumber) {

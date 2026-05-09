@@ -2,23 +2,18 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useRouter } from "next/navigation";
 
 import { createLeaveAction } from "@/actions/leave";
+import { LeaveDateRangeStrip } from "@/components/leave/leave-date-range-strip";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { calculateLeaveRemaining } from "@/lib/leave-balances";
-import {
-  calculateInclusiveLeaveDays,
-  formatDateLabel,
-  formatContractPeriod,
-  formatDays,
-  getLeaveTypeLabel,
-  LEAVE_TYPE_OPTIONS,
-} from "@/lib/leave";
+import { calculateWorkingLeaveDays } from "@/lib/leave-days";
+import { formatDateLabel, formatContractPeriod, formatDays, getLeaveTypeLabel, LEAVE_TYPE_OPTIONS } from "@/lib/leave";
 import { notifyError, notifySuccess, notifyWarning } from "@/lib/notify";
 import type { LeaveEmployeeOption } from "@/lib/server/leave";
 import { leaveFormSchema, type LeaveFormValues } from "@/lib/validators/leave-form";
@@ -48,7 +43,8 @@ const form = useForm<LeaveFormValues>({
       startDate: "",
       endDate: "",
       returnToWorkDate: "",
-      leaveDays: 0,
+      leaveDays: 1,
+      leaveDaysAdjustmentReason: "",
       notes: "",
     },
   });
@@ -66,6 +62,11 @@ const form = useForm<LeaveFormValues>({
   const startDate = watch("startDate");
   const endDate = watch("endDate");
   const leaveDays = Number(watch("leaveDays") || 0);
+  const leaveDaysAdjustmentReason = watch("leaveDaysAdjustmentReason") ?? "";
+
+  const [holidayMap, setHolidayMap] = useState<Record<string, string>>({});
+  const manualDaysLockedRef = useRef(false);
+  const [showRecalculateHint, setShowRecalculateHint] = useState(false);
 
   const selectedEmployee = useMemo(
     () => employees.find((employee) => employee.id === employeeId),
@@ -81,13 +82,47 @@ const form = useForm<LeaveFormValues>({
     const employee = employees.find((row) => row.id === initialEmployeeId);
     if (employee) setEmployeeQuery(`${employee.fullName} · ${employee.fileNumber}`);
   }, [initialEmployeeId, employees]);
-  const computedDays = useMemo(() => calculateInclusiveLeaveDays(startDate, endDate), [startDate, endDate]);
-  const requestedDays = leaveDays > 0 ? leaveDays : computedDays;
+  const holidayDateSet = useMemo(() => new Set(Object.keys(holidayMap)), [holidayMap]);
+  const computedDays = useMemo(
+    () => calculateWorkingLeaveDays(startDate, endDate, holidayDateSet),
+    [startDate, endDate, holidayDateSet],
+  );
+  const requestedDays = leaveDays > 0 ? leaveDays : Math.max(1, computedDays);
+
   useEffect(() => {
-    if (computedDays >= 1) {
-      setValue("leaveDays", computedDays, { shouldValidate: true });
+    let cancelled = false;
+    async function load() {
+      if (!startDate || !endDate || endDate < startDate) {
+        if (!cancelled) setHolidayMap({});
+        return;
+      }
+      try {
+        const res = await fetch(
+          `/api/public-holidays?from=${encodeURIComponent(startDate)}&to=${encodeURIComponent(endDate)}`,
+          { credentials: "include" },
+        );
+        const data = (await res.json()) as { holidays?: Record<string, string> };
+        if (!cancelled && data.holidays) setHolidayMap(data.holidays);
+      } catch {
+        if (!cancelled) setHolidayMap({});
+      }
     }
-  }, [computedDays, setValue]);
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [startDate, endDate]);
+
+  useEffect(() => {
+    if (!startDate || !endDate || endDate < startDate) return;
+    if (manualDaysLockedRef.current) {
+      setShowRecalculateHint(true);
+      return;
+    }
+    setShowRecalculateHint(false);
+    const next = computedDays >= 1 ? computedDays : 1;
+    setValue("leaveDays", next, { shouldValidate: true });
+  }, [computedDays, startDate, endDate, setValue]);
 
   const matchedContract = useMemo(() => {
     if (!selectedEmployee || !startDate || !endDate) return null;
@@ -167,7 +202,9 @@ const form = useForm<LeaveFormValues>({
     if (values.returnToWorkDate <= values.endDate) {
       return notifyError("Return to work date must be after the leave end date.");
     }
-    if (computedDays < 1) return notifyError("Leave period must be at least one day.");
+    if (computedDays < 1 && Math.round(Number(values.leaveDays)) < 1) {
+      return notifyError("Enter at least 1 leave day, or choose dates that include working days.");
+    }
     if (matchedContract?.kind === "crosses_contracts") {
       return notifyError("This leave period crosses more than one contract. Please split it into separate leave records.");
     }
@@ -285,6 +322,11 @@ const form = useForm<LeaveFormValues>({
           <Field label="End Date" required error={errors.endDate?.message}>
             <Input type="date" className="h-10 rounded-md" {...register("endDate")} />
           </Field>
+          {startDate && endDate && endDate >= startDate ? (
+            <div className="md:col-span-2">
+              <LeaveDateRangeStrip startDate={startDate} endDate={endDate} holidays={holidayMap} />
+            </div>
+          ) : null}
           <Field label="Return to Work Date" required error={errors.returnToWorkDate?.message}>
             <Input type="date" className="h-10 rounded-md" {...register("returnToWorkDate")} />
             <p className="text-muted-foreground text-xs">Return to Work Date is the date the employee is expected to resume duties.</p>
@@ -297,12 +339,57 @@ const form = useForm<LeaveFormValues>({
               className="h-10 rounded-md"
               {...register("leaveDays", {
                 valueAsNumber: true,
+                onChange: () => {
+                  manualDaysLockedRef.current = true;
+                },
                 onBlur: (event) => {
-                  if (!event.target.value && computedDays > 0) setValue("leaveDays", computedDays);
+                  if (!event.target.value && computedDays > 0) {
+                    setValue("leaveDays", computedDays, { shouldValidate: true });
+                  }
                 },
               })}
             />
+            <p className="text-muted-foreground mt-1 text-xs">
+              Leave days are automatically calculated using working days only, excluding weekends and Trinidad and Tobago
+              public holidays. You may manually adjust the count if required. Auto-calculated working days (Mon–Fri,
+              excluding weekends and TT public holidays): <strong className="text-foreground">{computedDays}</strong>.
+            </p>
+            {leaveType === "sick" ? (
+              <p className="text-muted-foreground mt-1 text-xs">
+                For sick leave spanning a weekend, HR may manually adjust the leave day count where applicable.
+              </p>
+            ) : null}
+            {showRecalculateHint ? (
+              <div className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+                Dates changed while days were manually adjusted. Calculated working days are now{" "}
+                <strong>{computedDays}</strong>.
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="ml-2 mt-2 h-8 sm:mt-0"
+                  onClick={() => {
+                    manualDaysLockedRef.current = false;
+                    setShowRecalculateHint(false);
+                    setValue("leaveDays", computedDays >= 1 ? computedDays : 1, { shouldValidate: true });
+                  }}
+                >
+                  Use calculated ({computedDays})
+                </Button>
+              </div>
+            ) : null}
           </Field>
+          {Math.round(leaveDays) !== computedDays ? (
+            <div className="md:col-span-2">
+              <Field label="Adjustment reason (optional)" error={errors.leaveDaysAdjustmentReason?.message}>
+                <textarea
+                  className="border-input bg-background min-h-[72px] w-full rounded-md border p-3 text-sm"
+                  placeholder="Explain why leave days differ from the automatic working-day count"
+                  {...register("leaveDaysAdjustmentReason")}
+                />
+              </Field>
+            </div>
+          ) : null}
           <div className="md:col-span-2">
             <Field label="Notes" error={errors.notes?.message}>
               <textarea

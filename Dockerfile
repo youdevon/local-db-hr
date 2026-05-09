@@ -16,7 +16,15 @@ RUN npm run build
 FROM node:22-alpine AS runner
 WORKDIR /app
 
-RUN apk add --no-cache tzdata
+RUN apk add --no-cache \
+    tzdata \
+    bash \
+    curl \
+    unzip \
+    rsync \
+    docker-cli \
+    docker-cli-compose \
+    postgresql-client
 
 ENV NODE_ENV=production
 ENV TZ=America/Port_of_Spain
@@ -28,6 +36,7 @@ COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/next.config.* ./
+COPY --from=builder /app/scripts ./scripts
 
 EXPOSE 3000
 

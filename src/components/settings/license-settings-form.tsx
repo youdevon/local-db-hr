@@ -3,9 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-import {
-  applySignedLicenseKeyAction,
-} from "@/actions/license";
+import { applySignedLicenseKeyAction } from "@/actions/license";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { notifyError, notifySuccess } from "@/lib/notify";
@@ -69,75 +67,104 @@ export function LicenseSettingsForm({ license, providerControlsEnabled, installe
     }
   }
 
+  const licenceDetailsSection = !settings ? (
+    <section className={cardClass}>
+      <div className="space-y-3">
+        <h2 className="font-heading text-base font-bold tracking-tight">Current licence</h2>
+        <p className="text-muted-foreground text-sm">
+          Licence details are controlled by the signed licence key.
+        </p>
+        <dl>
+          <LicenceSummaryRow label="Licence status" value={getLicenseStatusLabel(license.status)} />
+        </dl>
+      </div>
+    </section>
+  ) : (
+    <section className={cardClass}>
+      <h2 className="font-heading mb-2 text-base font-bold tracking-tight">Current licence</h2>
+      <p className="text-muted-foreground mb-4 text-sm">
+        Summary of your activated licence. Administrative controls remain enforced server-side.
+      </p>
+      <dl className="grid gap-3 text-sm sm:grid-cols-2">
+        <LicenceSummaryRow label="Organization" value={settings.organizationName} />
+        <LicenceSummaryRow label="Licence status" value={getLicenseStatusLabel(license.status)} />
+        <LicenceSummaryRow label="Licence type" value={settings.licenseType} />
+        <LicenceSummaryRow label="Expiry date" value={formatDateTime(settings.expiresAt)} />
+        <LicenceSummaryRow label="Issued date" value={formatDateTime(settings.issuedAt)} />
+        <LicenceSummaryRow
+          label="Days remaining"
+          value={license.daysRemaining == null ? "—" : String(license.daysRemaining)}
+        />
+        <LicenceSummaryRow label="Issued by" value={settings.issuedBy ?? "—"} />
+        <LicenceSummaryRow label="Activated at" value={formatDateTime(settings.activatedAt)} />
+        <div className="sm:col-span-2">
+          <LicenceSummaryRow label="Licence key" value={maskLicenseKey(settings.licenseKey) ?? "—"} mono />
+        </div>
+      </dl>
+      <p className="text-muted-foreground mt-4 text-xs">
+        Installed application version is shown under Updates below.
+      </p>
+      {license.clockTamperDetected ? (
+        <p className="mt-4 rounded-md border border-amber-300/70 bg-amber-50/80 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-200">
+          The server date/time appears to be incorrect. Please correct the server date and time to continue.
+        </p>
+      ) : null}
+    </section>
+  );
+
+  const activateSection = (
+    <ActivateKeyCard
+      signedKeyInput={signedKeyInput}
+      setSignedKeyInput={setSignedKeyInput}
+      onApply={applySignedKey}
+      saving={saving}
+    />
+  );
+
+  const updatesSection = (
+    <LicenseUpdatesSection key={updateManifestUrl} installedVersion={installedVersion} initialManifestUrl={updateManifestUrl} />
+  );
+
+  const providerSection =
+    providerControlsEnabled ? (
+      <section className={cardClass}>
+        <p className="text-muted-foreground text-sm">Provider controls are enabled for this environment.</p>
+      </section>
+    ) : null;
+
   if (!settings) {
     return (
       <div className="space-y-6">
-        <LicenseUpdatesSection key={updateManifestUrl} installedVersion={installedVersion} initialManifestUrl={updateManifestUrl} />
-        <section className={cardClass}>
-          <div className="space-y-3">
-            <h2 className="font-heading text-base font-bold tracking-tight">Current Licence</h2>
-            <p className="text-muted-foreground text-sm">
-              Licence details are controlled by the signed licence key.
-            </p>
-            <Info label="Licence Status" value={getLicenseStatusLabel(license.status)} />
-          </div>
-        </section>
-        <ActivateKeyCard
-          signedKeyInput={signedKeyInput}
-          setSignedKeyInput={setSignedKeyInput}
-          onApply={applySignedKey}
-          saving={saving}
-        />
+        {licenceDetailsSection}
+        {updatesSection}
+        {activateSection}
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <LicenseUpdatesSection key={updateManifestUrl} installedVersion={installedVersion} initialManifestUrl={updateManifestUrl} />
-      <section className={cardClass}>
-        <h2 className="font-heading mb-2 text-base font-bold tracking-tight">Current Licence</h2>
-        <p className="text-muted-foreground mb-4 text-sm">Licence details are controlled by the signed licence key.</p>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <Info label="Organization Name" value={settings.organizationName} />
-          <Info label="Product Name" value={settings.productName} />
-          <Info label="Licence Status" value={getLicenseStatusLabel(license.status)} />
-          <Info label="Licence Type" value={settings.licenseType} />
-          <Info label="Issued Date" value={formatDateTime(settings.issuedAt)} />
-          <Info label="Expiry Date" value={formatDateTime(settings.expiresAt)} />
-          <Info label="Grace Period Days" value={String(settings.gracePeriodDays)} />
-          <Info label="Hard Stop Date" value={formatDateTime(license.hardStopDateIso)} />
-          <Info label="Days Remaining" value={license.daysRemaining == null ? "—" : String(license.daysRemaining)} />
-          <Info label="Grace Days Remaining" value={license.graceDaysRemaining == null ? "—" : String(license.graceDaysRemaining)} />
-          <Info label="Max Users" value={settings.maxUsers == null ? "Unlimited" : String(settings.maxUsers)} />
-          <Info label="Max Employees" value={settings.maxEmployees == null ? "Unlimited" : String(settings.maxEmployees)} />
-          <Info label="Issued By" value={settings.issuedBy ?? "—"} />
-          <Info label="Activated At" value={formatDateTime(settings.activatedAt)} />
-          <Info label="Stored licence key" value={maskLicenseKey(settings.licenseKey) ?? "—"} />
-          <Info label="Last Valid Check" value={formatDateTime(settings.lastValidCheckAt)} />
-          <Info label="Last Checked" value={formatDateTime(settings.lastCheckedAt)} />
-        </div>
-        {license.clockTamperDetected ? (
-          <p className="mt-4 rounded-md border border-amber-300/70 bg-amber-50/80 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-200">
-            The server date/time appears to be incorrect. Please correct the server date and time to continue.
-          </p>
-        ) : null}
-      </section>
+      {licenceDetailsSection}
+      {updatesSection}
+      {activateSection}
+      {providerSection}
+    </div>
+  );
+}
 
-      <ActivateKeyCard
-        signedKeyInput={signedKeyInput}
-        setSignedKeyInput={setSignedKeyInput}
-        onApply={applySignedKey}
-        saving={saving}
-      />
-
-      {providerControlsEnabled ? (
-        <section className={cardClass}>
-          <p className="text-muted-foreground text-sm">
-            Provider controls are enabled for this environment.
-          </p>
-        </section>
-      ) : null}
+function LicenceSummaryRow({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="border-border/60 border-b pb-3 last:border-0 last:pb-0 sm:border-0 sm:pb-0">
+      <dt className="text-muted-foreground text-xs">{label}</dt>
+      <dd className={`mt-0.5 font-medium ${mono ? "break-all font-mono text-xs sm:text-sm" : ""}`}>{value || "—"}</dd>
     </div>
   );
 }
@@ -155,13 +182,13 @@ function ActivateKeyCard({
 }) {
   return (
     <section className={cardClass}>
-      <h2 className="font-heading mb-2 text-base font-bold tracking-tight">Activate / Update Licence</h2>
+      <h2 className="font-heading mb-2 text-base font-bold tracking-tight">Activate / update licence</h2>
       <p className="text-muted-foreground mb-4 text-sm">
-        Paste a vendor-issued D3HR licence key. The server verifies the signature and updates licence details from the
-        signed payload.
+        Paste a vendor-issued licence key. The server verifies the signature and updates licence details from the signed
+        payload.
       </p>
       <div className="space-y-2">
-        <Label className="text-sm font-medium">Licence Key</Label>
+        <Label className="text-sm font-medium">Licence key</Label>
         <textarea
           className="border-input bg-background min-h-[120px] w-full rounded-md border px-3 py-2 font-mono text-sm"
           spellCheck={false}
@@ -170,18 +197,9 @@ function ActivateKeyCard({
           placeholder='D3HR.eyJ...'
         />
         <Button type="button" onClick={() => void onApply()} disabled={saving}>
-          {saving ? "Activating..." : "Activate Licence"}
+          {saving ? "Activating..." : "Activate licence"}
         </Button>
       </div>
     </section>
-  );
-}
-
-function Info({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="space-y-1 rounded-md border border-border bg-muted/20 px-3 py-2">
-      <p className="text-muted-foreground text-xs">{label}</p>
-      <p className="text-sm font-medium">{value || "—"}</p>
-    </div>
   );
 }

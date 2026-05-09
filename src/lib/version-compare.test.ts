@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   compareSemverStyle,
   isVersionNewer,
+  meetsMinimumSupportedVersion,
   parseSemverStyle,
   stripVersionPrefix,
 } from "./version-compare";
@@ -51,6 +52,18 @@ describe("compareSemverStyle", () => {
   it("treats a release as newer than a prerelease with the same core", () => {
     expect(compareSemverStyle("1.0.0", "1.0.0-rc.1")).toBeGreaterThan(0);
     expect(compareSemverStyle("1.0.0-beta", "1.0.0")).toBeLessThan(0);
+  });
+});
+
+describe("meetsMinimumSupportedVersion", () => {
+  it("returns true when installed is at or above the minimum", () => {
+    expect(meetsMinimumSupportedVersion("0.12.0-beta", "0.11.0-beta")).toBe(true);
+    expect(meetsMinimumSupportedVersion("v0.11.0-beta", "0.11.0-beta")).toBe(true);
+  });
+
+  it("returns false when installed is below the minimum or unparsable", () => {
+    expect(meetsMinimumSupportedVersion("0.10.0-beta", "0.11.0-beta")).toBe(false);
+    expect(meetsMinimumSupportedVersion("nope", "0.11.0-beta")).toBe(false);
   });
 });
 

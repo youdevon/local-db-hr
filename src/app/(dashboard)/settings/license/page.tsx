@@ -35,7 +35,7 @@ export default async function LicenseSettingsPage() {
         backFallbackHref="/settings"
         title="Licence & Updates"
         icon="shield-check"
-        description="Manage licensing, check for approved GitHub releases, and follow manual upgrade steps. No automatic installation is performed from this page."
+        description="Review licence status, check for approved GitHub releases, and install updates when permitted. Full release notes are on GitHub."
       />
       <LicenseSettingsForm
         license={license}

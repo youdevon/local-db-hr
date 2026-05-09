@@ -75,3 +75,14 @@ export function isVersionNewer(latest: string, installed: string): boolean {
   if (!parseSemverStyle(latest) || !parseSemverStyle(installed)) return false;
   return compareSemverStyle(latest, installed) > 0;
 }
+
+/**
+ * True when the running installation is at least `minimumSupportedVersion`
+ * (required for applying this update). Both values must parse as semver-style.
+ */
+export function meetsMinimumSupportedVersion(installed: string, minimumSupportedVersion: string): boolean {
+  const a = parseSemverStyle(installed);
+  const b = parseSemverStyle(minimumSupportedVersion);
+  if (!a || !b) return false;
+  return compareSemverStyle(installed, minimumSupportedVersion) >= 0;
+}
