@@ -1,21 +1,19 @@
 {
   "appName": "Local DB HR",
-  "latestVersion": "0.11.1-beta",
-  "releaseTag": "v0.11.1-beta",
+  "latestVersion": "0.12.0-beta",
+  "releaseTag": "v0.12.0-beta",
   "releaseDate": "2026-05-09",
   "updateChannel": "beta",
-  "minimumSupportedVersion": "0.11.0-beta",
+  "minimumSupportedVersion": "0.11.1-beta",
   "requiresDatabaseMigration": true,
   "requiresDockerRebuild": true,
-  "releaseUrl": "https://github.com/youdevon/local-db-hr/releases/tag/v0.11.1-beta",
-  "downloadUrl": "https://github.com/youdevon/local-db-hr/archive/refs/tags/v0.11.1-beta.zip",
+  "releaseUrl": "https://github.com/youdevon/local-db-hr/releases/tag/v0.12.0-beta",
+  "downloadUrl": "https://github.com/youdevon/local-db-hr/archive/refs/tags/v0.12.0-beta.zip",
   "notes": [
-    "Initial licensed upgrade release for Local DB HR.",
-    "Includes branding settings and application logo support.",
-    "Includes licence management page.",
-    "Includes security settings.",
-    "Includes profile self-service updates.",
-    "Includes audit trail improvements.",
-    "Includes contract, leave, and gratuity calculation updates."
+    "Added licensed deployment update-check page.",
+    "Added online update manifest checking.",
+    "Added latest version and release notes display.",
+    "Added manual upgrade guidance for licensed deployments.",
+    "Added audit logging for update checks."
   ]
 }
