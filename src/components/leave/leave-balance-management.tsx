@@ -1,6 +1,9 @@
 "use client";
 
-import { StatusBadge } from "@/components/status-badge";
+import Link from "next/link";
+
+import { StatusBadge, type StatusTone } from "@/components/status-badge";
+import { buttonVariants } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -10,8 +13,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { getLeaveStatusTone } from "@/lib/leave-balances";
+import { getLeaveContractUiStatus } from "@/lib/leave-contract-ui-status";
 import { formatDateLabel } from "@/lib/leave";
-
 type LeaveContractView = {
   contractId: string;
   minuteNumber: string;
@@ -48,8 +51,10 @@ type LeaveContractView = {
 
 export function LeaveBalanceManagement({
   contracts,
+  employeeId,
 }: {
   contracts: LeaveContractView[];
+  employeeId?: string;
 }) {
   function remainingTone(status: "Healthy" | "Low" | "Exhausted" | "Overused") {
     if (status === "Low") return "bg-amber-50 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200";
@@ -60,13 +65,39 @@ export function LeaveBalanceManagement({
 
   return (
     <div className="space-y-4">
-      {contracts.map((contract) => (
+      {contracts.map((contract) => {
+        const contractUi = getLeaveContractUiStatus(contract.status);
+        return (
         <div key={contract.contractId} className="rounded-xl border border-border p-4">
-          <div className="mb-3 grid gap-2 text-sm md:grid-cols-2">
-            <p>Minute #: {contract.minuteNumber}</p>
-            <p>Contract #: {contract.contractNumber}</p>
-            <p>Contract period: {contract.contractPeriod}</p>
-            <p>Status: {contract.status}</p>
+          <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="grid flex-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+              <p>
+                <span className="text-muted-foreground">Contract Period: </span>
+                <span className="font-medium text-foreground">{contract.contractPeriod}</span>
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-muted-foreground">Contract Status</span>
+                <StatusBadge tone={contractUi.tone as StatusTone}>{contractUi.label}</StatusBadge>
+              </div>
+              <p>
+                <span className="text-muted-foreground">Minute Number: </span>
+                <span className="font-medium text-foreground">{contract.minuteNumber}</span>
+              </p>
+              <p>
+                <span className="text-muted-foreground">Contract Number: </span>
+                <span className="font-medium text-foreground">{contract.contractNumber}</span>
+              </p>
+            </div>
+            {employeeId ? (
+              <Link
+                href={`/leave/transactions?employeeId=${encodeURIComponent(employeeId)}&contractId=${encodeURIComponent(contract.contractId)}&view=breakdown`}
+                className={buttonVariants({ variant: "outline", className: "h-9 shrink-0 rounded-md text-xs font-medium" })}
+                aria-label="Open leave transactions breakdown for this contract period"
+                title="View leave taken by contractual year with balances for this contract period"
+              >
+                View Breakdown
+              </Link>
+            ) : null}
           </div>
 
           <div className="space-y-3">
@@ -138,7 +169,8 @@ export function LeaveBalanceManagement({
             ))}
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

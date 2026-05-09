@@ -19,7 +19,7 @@ import {
   getLeaveTypeLabel,
   LEAVE_TYPE_OPTIONS,
 } from "@/lib/leave";
-import { notifyError, notifySuccess } from "@/lib/notify";
+import { notifyError, notifySuccess, notifyWarning } from "@/lib/notify";
 import type { LeaveEmployeeOption } from "@/lib/server/leave";
 import { leaveFormSchema, type LeaveFormValues } from "@/lib/validators/leave-form";
 import { cn } from "@/lib/utils";
@@ -174,7 +174,9 @@ const form = useForm<LeaveFormValues>({
     if (matchedContract?.kind === "no_match") {
       return notifyError("No matching contract period was found for this leave date range.");
     }
-    if (insufficient) return notifyError("Requested leave exceeds the remaining balance for this contract period.");
+    if (insufficient) {
+      return notifyError("Unable to record leave. Requested days exceed the available balance.");
+    }
 
     const finalValues = {
       ...values,
@@ -187,7 +189,10 @@ const form = useForm<LeaveFormValues>({
         notifyError(result.message || "Failed to create leave record. Please try again.");
         return;
       }
-      notifySuccess("Leave record created successfully.");
+      notifySuccess(result.message);
+      if (result.emailNotificationWarning) {
+        notifyWarning(result.emailNotificationWarning);
+      }
       router.push("/leave");
       router.refresh();
     } catch (err) {
@@ -199,7 +204,7 @@ const form = useForm<LeaveFormValues>({
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
       <section className={cn(floatingCard, "space-y-4")}>
-        <h2 className="text-base font-semibold">Employee Selection</h2>
+        <h2 className="font-heading text-base font-bold tracking-tight">Employee Selection</h2>
         <div className="space-y-3">
           <Field label="Employee" required error={errors.employeeId?.message}>
             <Input
@@ -259,7 +264,7 @@ const form = useForm<LeaveFormValues>({
       </section>
 
       <section className={cn(floatingCard, "space-y-4")}>
-        <h2 className="text-base font-semibold">Leave Type</h2>
+        <h2 className="font-heading text-base font-bold tracking-tight">Leave Type</h2>
         <Field label="Leave Type" required error={errors.leaveType?.message}>
           <select className="border-input bg-background h-10 w-full rounded-md border px-3 text-sm" {...register("leaveType")}>
             {LEAVE_TYPE_OPTIONS.map((option) => (
@@ -272,7 +277,7 @@ const form = useForm<LeaveFormValues>({
       </section>
 
       <section className={cn(floatingCard, "space-y-4")}>
-        <h2 className="text-base font-semibold">Leave Period</h2>
+        <h2 className="font-heading text-base font-bold tracking-tight">Leave Period</h2>
         <div className="grid gap-4 md:grid-cols-2">
           <Field label="Start Date" required error={errors.startDate?.message}>
             <Input type="date" className="h-10 rounded-md" {...register("startDate")} />
@@ -310,7 +315,7 @@ const form = useForm<LeaveFormValues>({
       </section>
 
       <section className={cn(floatingCard, "space-y-4")}>
-        <h2 className="text-base font-semibold">Contract Period / Balance Preview</h2>
+        <h2 className="font-heading text-base font-bold tracking-tight">Contract Period / Balance Preview</h2>
         {selectedEmployee?.currentContract ? (
           <div className="grid gap-2 text-sm md:grid-cols-2">
             <p>Contract #: {selectedEmployee.currentContract.contractNumber || "—"}</p>
@@ -368,7 +373,7 @@ const form = useForm<LeaveFormValues>({
         ) : null}
         {insufficient ? (
           <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            Requested leave exceeds the remaining balance for this contract period.
+            Unable to record leave. Requested days exceed the available balance.
           </div>
         ) : null}
       </section>

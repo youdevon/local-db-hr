@@ -4,7 +4,9 @@ import { motion } from "framer-motion";
 
 import { MainFooter } from "@/components/main-footer";
 import { PageContainer } from "@/components/page-container";
+import { SessionTimeoutGuard } from "@/components/session-timeout-guard";
 import { Sidebar } from "@/components/sidebar";
+import type { SidebarLicenseIndicator } from "@/components/sidebar-footer-tray";
 import { TopHeader } from "@/components/top-header";
 import type { SessionUser } from "@/lib/session";
 
@@ -12,18 +14,21 @@ export function AppShell({
   user,
   children,
   viewOnly = false,
+  licenseIndicator = null,
 }: {
   user: SessionUser;
   children: React.ReactNode;
   viewOnly?: boolean;
+  licenseIndicator?: SidebarLicenseIndicator | null;
 }) {
   return (
     <div className="bg-background text-foreground flex h-svh min-h-0 overflow-hidden">
+      <SessionTimeoutGuard />
       <div className="hidden h-svh min-h-0 shrink-0 lg:block">
-        <Sidebar role={user.role} />
+        <Sidebar role={user.role} licenseIndicator={licenseIndicator} />
       </div>
       <div className="flex h-svh min-h-0 min-w-0 flex-1 flex-col">
-        <TopHeader user={user} />
+        <TopHeader user={user} licenseIndicator={licenseIndicator} />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <motion.main
             initial={{ opacity: 0, y: 6 }}

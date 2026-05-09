@@ -23,11 +23,35 @@ type ProfileData = {
     employeeId: string | null;
   };
   employee: null | {
+    id: string;
     fullName: string;
     fileNumber: string;
     email: string;
     department: string;
     position: string;
+    personal: {
+      mobileNumber: string;
+      homeNumber: string;
+      personalEmail: string;
+      addressLine1: string;
+      addressLine2: string;
+      communityCity: string;
+      regionMunicipality: string;
+      country: string;
+      postalCode: string;
+      emergencyContactName: string;
+      emergencyContactRelationship: string;
+      emergencyContactMobileNumber: string;
+      emergencyContactAlternativeNumber: string;
+      emergencyContactEmail: string;
+      emergencyContactAddress: string;
+      nextOfKinFullName: string;
+      nextOfKinRelationship: string;
+      nextOfKinMobileNumber: string;
+      nextOfKinAlternativeNumber: string;
+      nextOfKinEmail: string;
+      nextOfKinAddress: string;
+    };
   };
   contract: null | {
     minuteNumber: string;
@@ -138,6 +162,9 @@ export async function getProfileDataForUser(
       first_name: string;
       last_name: string;
       work_email: string | null;
+      personal_email: string | null;
+      mobile_number: string | null;
+      home_number: string | null;
       department: string | null;
       position: string | null;
     }>
@@ -148,6 +175,9 @@ export async function getProfileDataForUser(
       first_name,
       last_name,
       work_email,
+      personal_email,
+      mobile_number,
+      home_number,
       department,
       position
     FROM public.employees
@@ -199,12 +229,48 @@ export async function getProfileDataForUser(
 
   const fullName = `${employee.first_name} ${employee.last_name}`.trim();
   const fallbackEmail = user.email?.trim() || "—";
+  const residentialAddress = await prisma.employee_addresses.findFirst({
+    where: { employee_id: user.employee_id, address_type: "residential" },
+    orderBy: [{ is_primary: "desc" }, { created_at: "asc" }],
+  });
+  const primaryEmergency = await prisma.employee_emergency_contacts.findFirst({
+    where: { employee_id: user.employee_id, contact_type: "primary_emergency" },
+    orderBy: [{ is_primary: "desc" }, { created_at: "asc" }],
+  });
+  const nextOfKin = await prisma.employee_emergency_contacts.findFirst({
+    where: { employee_id: user.employee_id, contact_type: "next_of_kin" },
+    orderBy: [{ is_primary: "desc" }, { created_at: "asc" }],
+  });
   base.employee = {
+    id: employee.id,
     fullName,
     fileNumber: employee.file_number || "—",
     email: employee.work_email?.trim() || fallbackEmail,
     department: employee.department?.trim() || base.account.department || "—",
     position: employee.position?.trim() || "—",
+    personal: {
+      mobileNumber: employee.mobile_number?.trim() || "",
+      homeNumber: employee.home_number?.trim() || "",
+      personalEmail: employee.personal_email?.trim() || "",
+      addressLine1: residentialAddress?.address_line_1?.trim() || "",
+      addressLine2: residentialAddress?.address_line_2?.trim() || "",
+      communityCity: residentialAddress?.community_city?.trim() || "",
+      regionMunicipality: residentialAddress?.region_municipality?.trim() || "",
+      country: residentialAddress?.country?.trim() || "Trinidad and Tobago",
+      postalCode: residentialAddress?.postal_code?.trim() || "",
+      emergencyContactName: primaryEmergency?.contact_name?.trim() || "",
+      emergencyContactRelationship: primaryEmergency?.relationship?.trim() || "",
+      emergencyContactMobileNumber: primaryEmergency?.mobile_number?.trim() || "",
+      emergencyContactAlternativeNumber: primaryEmergency?.alternative_number?.trim() || "",
+      emergencyContactEmail: primaryEmergency?.email?.trim() || "",
+      emergencyContactAddress: primaryEmergency?.address?.trim() || "",
+      nextOfKinFullName: nextOfKin?.contact_name?.trim() || "",
+      nextOfKinRelationship: nextOfKin?.relationship?.trim() || "",
+      nextOfKinMobileNumber: nextOfKin?.mobile_number?.trim() || "",
+      nextOfKinAlternativeNumber: nextOfKin?.alternative_number?.trim() || "",
+      nextOfKinEmail: nextOfKin?.email?.trim() || "",
+      nextOfKinAddress: nextOfKin?.address?.trim() || "",
+    },
   };
 
   if (!contract) return base;

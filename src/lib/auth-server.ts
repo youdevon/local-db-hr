@@ -10,6 +10,7 @@ import {
   type Permission,
   type UserRole,
 } from "@/lib/roles";
+import { getLicenseStatus } from "@/lib/license";
 import { LOGIN_SESSION_EXPIRED_HREF, type SessionUser } from "@/lib/session";
 
 export { MUTATION_NOT_PERMITTED_MESSAGE } from "@/lib/roles";
@@ -47,6 +48,14 @@ export async function assertViewerCannotMutateOrThrow(): Promise<void> {
   if (isViewerRole(user.role)) {
     throw new Error(MUTATION_NOT_PERMITTED_MESSAGE);
   }
+  const license = await getLicenseStatus();
+  if (!license.configured || !license.accessAllowed) {
+    throw new Error(
+      license.clockTamperDetected
+        ? "The server date/time appears to be incorrect. Please correct the server date and time to continue."
+        : "Licence expired. This action is not available until the application is activated.",
+    );
+  }
 }
 
 /** Requires a signed-in user id; redirects to login when the session is missing or invalid. */
@@ -64,6 +73,12 @@ export async function requirePermission(permission: Permission): Promise<{ userI
   const role = normalizeUserRole(session.user?.role ?? null);
   if (!userId) {
     redirect(LOGIN_SESSION_EXPIRED_HREF);
+  }
+  const mutatingPermissionPrefixes = ["employees.", "contracts.", "leave.", "users.", "documents.", "reports.", "settings."];
+  const isPotentialMutation = mutatingPermissionPrefixes.some((prefix) => permission.startsWith(prefix)) && !permission.endsWith(".view");
+  if (isPotentialMutation) {
+    const license = await getLicenseStatus();
+    if (!license.configured || !license.accessAllowed) return null;
   }
   if (!canPerformAction(role, permission)) return null;
   return { userId, role };

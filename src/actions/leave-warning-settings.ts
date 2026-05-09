@@ -55,7 +55,7 @@ export async function saveLeaveWarningSettingsAction(input: unknown): Promise<Le
       deviceName: deviceLabel,
       userAgent,
     });
-    return { success: false, message: "Failed to update leave warning settings. Please try again." };
+    return { success: false, message: "Unable to update leave warning settings. Please try again." };
   }
 
   try {
@@ -65,7 +65,7 @@ export async function saveLeaveWarningSettingsAction(input: unknown): Promise<Le
         VALUES (
           'leave_warning_settings',
           ${JSON.stringify(parsed.data)}::jsonb,
-          'Leave warning settings used to classify low leave balances.'
+          'Leave warning settings used across leave balances and dashboard warnings.'
         )
         ON CONFLICT (setting_key)
         DO UPDATE SET
@@ -89,8 +89,11 @@ export async function saveLeaveWarningSettingsAction(input: unknown): Promise<Le
     revalidatePath("/settings");
     revalidatePath("/settings/leave-warning");
     revalidatePath("/");
+    revalidatePath("/dashboard");
+    revalidatePath("/reports");
     return { success: true, message: "Leave warning settings updated successfully." };
-  } catch {
+  } catch (error) {
+    console.error("[leave-warning-settings] Failed to update leave warning settings", error);
     await createSystemAuditLog({
       ...actor,
       module: "Global Settings",
@@ -103,12 +106,10 @@ export async function saveLeaveWarningSettingsAction(input: unknown): Promise<Le
       deviceName: deviceLabel,
       userAgent,
     });
-    return { success: false, message: "Failed to update leave warning settings. Please try again." };
+    return { success: false, message: "Unable to update leave warning settings. Please try again." };
   }
 }
 
 export async function resetLeaveWarningSettingsAction(): Promise<LeaveWarningSettingsResult> {
   return saveLeaveWarningSettingsAction(DEFAULT_LEAVE_WARNING_SETTINGS);
 }
-
-export type { LeaveWarningSettings };

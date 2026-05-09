@@ -82,9 +82,11 @@ const defaultFilters: DirectoryFilters = {
 export function AgeMonitoringClient({
   allRows,
   canCreateEmployee,
+  retirementAge,
 }: {
   allRows: EmployeeDirectoryRow[];
   canCreateEmployee: boolean;
+  retirementAge: number;
 }) {
   const router = useRouter();
   const [filters, setFilters] = useState<DirectoryFilters>(defaultFilters);
@@ -119,6 +121,11 @@ export function AgeMonitoringClient({
   function clearAll() {
     setFilters(defaultFilters);
   }
+
+  const quickAgeThresholds = useMemo(
+    () => [Math.max(18, retirementAge - 5), retirementAge, Math.min(100, retirementAge + 5)],
+    [retirementAge],
+  );
 
   function exportCsv() {
     try {
@@ -179,15 +186,11 @@ export function AgeMonitoringClient({
 
       <div className="border-border bg-card space-y-3 rounded-xl border p-5 shadow-sm">
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" onClick={() => applyQuickAge("55")}>
-            Age 55+
-          </Button>
-          <Button type="button" variant="outline" onClick={() => applyQuickAge("60")}>
-            Age 60+
-          </Button>
-          <Button type="button" variant="outline" onClick={() => applyQuickAge("65")}>
-            Age 65+
-          </Button>
+          {quickAgeThresholds.map((ageValue) => (
+            <Button key={ageValue} type="button" variant="outline" onClick={() => applyQuickAge(String(ageValue))}>
+              Age {ageValue}+
+            </Button>
+          ))}
           <Button type="button" variant="outline" onClick={() => setFilters((p) => ({ ...p, minAge: "", maxAge: "" }))}>
             Custom Range
           </Button>

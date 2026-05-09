@@ -41,10 +41,12 @@ function Field({ label, value }: { label: string; value: ReactNode }) {
 export function EmployeeDetailTabs({
   employee,
   allowMutations = true,
+  qualificationsContent,
 }: {
   employee: EmployeeRecord;
   /** When false (e.g. viewer role), hide document action column and any mutation affordances. */
   allowMutations?: boolean;
+  qualificationsContent: ReactNode;
 }) {
   const router = useRouter();
   const age = calculateAge(employee.dateOfBirth);
@@ -70,7 +72,6 @@ export function EmployeeDetailTabs({
   const primaryEmergencyContact = getPrimaryEmergencyContact(employee);
   const secondaryEmergencyContact = getSecondaryEmergencyContact(employee);
   const nextOfKin = getNextOfKinContact(employee);
-  const documents = employee.documents ?? [];
   const rightToWork = employee.rightToWork;
   const permitExpiry = rightToWork?.workPermitExpiryDate
     ? new Date(`${rightToWork.workPermitExpiryDate}T12:00:00`)
@@ -101,8 +102,8 @@ export function EmployeeDetailTabs({
         <TabsTrigger value="employment" className="shrink-0">
           Employment
         </TabsTrigger>
-        <TabsTrigger value="documents" className="shrink-0">
-          Documents
+        <TabsTrigger value="qualifications" className="shrink-0">
+          Qualifications
         </TabsTrigger>
         <TabsTrigger value="notes" className="shrink-0">
           Notes
@@ -432,63 +433,8 @@ export function EmployeeDetailTabs({
         </div>
       </TabsContent>
 
-      <TabsContent value="documents" className={cn(panel, "mt-0")}>
-        <div className="space-y-4">
-          <p className="text-muted-foreground text-sm leading-relaxed">
-            Qualifications are handled under documents together with certificates, IDs, permits, and contracts.
-          </p>
-          <p className="text-muted-foreground text-xs leading-relaxed">
-            Supported types: Qualification, Certificate, Transcript, Professional Certification, Licence, Resume / CV,
-            National ID, Passport, Driver Permit, Work Permit, NIS, BIR, Contract, Other.
-          </p>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Document name</TableHead>
-                <TableHead>Document type</TableHead>
-                <TableHead>Issue date</TableHead>
-                <TableHead>Expiry date</TableHead>
-                <TableHead>Uploaded date</TableHead>
-                <TableHead>Status</TableHead>
-                {allowMutations ? <TableHead>Action</TableHead> : null}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {documents.length === 0 ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={allowMutations ? 7 : 6}
-                    className="text-muted-foreground text-center"
-                  >
-                    No documents recorded.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                documents.map((doc) => (
-                  <TableRow key={doc.did}>
-                    <TableCell className="whitespace-normal font-medium">{doc.documentName}</TableCell>
-                    <TableCell>{doc.documentType}</TableCell>
-                    <TableCell className="whitespace-nowrap">
-                      {doc.issueDate ? formatEmployeeDateDisplay(doc.issueDate) : "—"}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap">
-                      {doc.expiryDate ? formatEmployeeDateDisplay(doc.expiryDate) : "—"}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap">
-                      {formatEmployeeDateDisplay(doc.uploadedAt)}
-                    </TableCell>
-                    <TableCell>{doc.status}</TableCell>
-                    {allowMutations ? (
-                      <TableCell>
-                        <span className="text-muted-foreground text-xs">View (coming soon)</span>
-                      </TableCell>
-                    ) : null}
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
+      <TabsContent value="qualifications" className="mt-0 space-y-5">
+        {qualificationsContent}
       </TabsContent>
 
       <TabsContent value="notes" className={cn(panel, "mt-0")}>

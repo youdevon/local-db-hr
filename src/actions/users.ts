@@ -5,8 +5,15 @@ import { revalidatePath } from "next/cache";
 
 import { createLoginAuditLog, createSystemAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { requirePermission, requireSessionUserId } from "@/lib/auth-server";
+import { sendHrNotification } from "@/lib/email/hr-notifications";
+import { buildSimpleHrTemplate } from "@/lib/email/templates";
 import { prisma } from "@/lib/prisma";
 import { normalizeUserRole } from "@/lib/roles";
+import {
+  getPasswordPolicySettings,
+  getRoleSafetySettings,
+  validatePasswordAgainstPolicy,
+} from "@/lib/security-settings";
 import { initialsFromFullName } from "@/lib/user-initials";
 import {
   changeOwnPasswordSchema,
@@ -14,7 +21,9 @@ import {
   updateUserRoleSchema,
 } from "@/lib/validators/user";
 
-export type UserMutationResult = { ok: true; message?: string } | { ok: false; message?: string };
+export type UserMutationResult =
+  | { ok: true; success?: true; message?: string }
+  | { ok: false; success?: false; message?: string };
 export type PasswordChangeResult =
   | { success: true; message: "Password changed successfully." }
   | { success: false; message: string };
@@ -92,17 +101,82 @@ async function resolveUserAuditTargetLabel(userId: string | null | undefined): P
   return `User: ${buildUserAuditDisplayName(row)}`;
 }
 
+function safeCreateUserMessageForClient(error: unknown): string {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === "P2002") {
+      const target = error.meta?.target;
+      const targetStr = Array.isArray(target) ? target.join(" ") : String(target ?? "");
+      const lowerTarget = targetStr.toLowerCase();
+      if (lowerTarget.includes("employee_id") || lowerTarget.includes("unique_user_profile_employee")) {
+        return "The selected employee is already linked to another user account.";
+      }
+      return "A user with this email already exists.";
+    }
+  }
+  const text = error instanceof Error ? error.message : String(error);
+  if (text === "EMPLOYEE_ALREADY_LINKED") {
+    return "The selected employee is already linked to another user account.";
+  }
+  const lower = text.toLowerCase();
+  if (
+    lower.includes("unique constraint") ||
+    lower.includes("duplicate key") ||
+    lower.includes("already exists") ||
+    lower.includes("users_email") ||
+    lower.includes("users_email_key")
+  ) {
+    return "A user with this email already exists.";
+  }
+  if (
+    lower.includes("unique_user_profile_employee") ||
+    (lower.includes("employee_id") && lower.includes("unique"))
+  ) {
+    return "The selected employee is already linked to another user account.";
+  }
+  if (lower.includes("user_profiles_role_check") || (lower.includes("role") && lower.includes("check constraint"))) {
+    return "Please select a valid user role.";
+  }
+  if (lower.includes("violates check constraint")) {
+    return "User account could not be created because a required field did not meet requirements.";
+  }
+  if (lower.includes("permission denied") || lower.includes("row-level security")) {
+    return "User account could not be created. Please try again.";
+  }
+  if (lower.includes("gen_salt") || lower.includes("pgcrypto") || lower.includes("crypt(")) {
+    return "User account could not be created. Please try again.";
+  }
+  return "User account could not be created. Please try again.";
+}
+
 export async function createUserAction(input: unknown): Promise<UserMutationResult> {
   const auth = await requirePermission("users.create");
-  const actorId = auth?.userId ?? null;
-  if (!actorId) return { ok: false };
+  if (!auth?.userId) {
+    return { ok: false, success: false, message: "You do not have permission to create user accounts." };
+  }
+  if (normalizeUserRole(auth.role) !== "administrator") {
+    return { ok: false, success: false, message: "You do not have permission to create user accounts." };
+  }
+  const actorId = auth.userId;
   const { ip, userAgent, deviceLabel } = await getAuditRequestContext();
 
   const parsed = createUserFormSchema.safeParse(input);
-  if (!parsed.success) return { ok: false };
+  if (!parsed.success) {
+    const first = parsed.error.issues[0]?.message;
+    return {
+      ok: false,
+      success: false,
+      message: first || "Please complete all required fields.",
+    };
+  }
 
-  const { fullName, email, password, role, department, isActive } = parsed.data;
-  const emailNorm = email.toLowerCase().trim();
+  const { fullName, email, password, role, department, isActive, employeeId } = parsed.data;
+
+  const passwordPolicy = await getPasswordPolicySettings();
+  const passwordIssue = validatePasswordAgainstPolicy(password, passwordPolicy);
+  if (passwordIssue) {
+    return { ok: false, success: false, message: passwordIssue };
+  }
+  const emailNorm = email;
   const fullNameTrimmed = fullName.trim();
   const createdUserTargetLabel = `User: ${fullNameTrimmed || emailNorm}`;
   const initials = initialsFromFullName(fullName);
@@ -125,7 +199,7 @@ export async function createUserAction(input: unknown): Promise<UserMutationResu
       deviceName: deviceLabel,
       userAgent,
     });
-    return { ok: false };
+    return { ok: false, success: false, message: "A user with this email already exists." };
   }
 
   try {
@@ -155,6 +229,20 @@ export async function createUserAction(input: unknown): Promise<UserMutationResu
           department: dept,
         },
       });
+
+      if (employeeId) {
+        const existingLink = await tx.userProfile.findFirst({
+          where: { employee_id: employeeId },
+          select: { user_id: true },
+        });
+        if (existingLink) {
+          throw new Error("EMPLOYEE_ALREADY_LINKED");
+        }
+        await tx.userProfile.update({
+          where: { user_id: id },
+          data: { employee_id: employeeId },
+        });
+      }
     });
     revalidateUsers();
     await createSystemAuditLog({
@@ -168,8 +256,25 @@ export async function createUserAction(input: unknown): Promise<UserMutationResu
       deviceName: deviceLabel,
       userAgent,
     });
-    return { ok: true };
+    await sendHrNotification({
+      notificationType: "user_created",
+      settingKey: "sendSecurityAdminAlerts",
+      recipientMode: "hr_only",
+      subject: "User Account Created",
+      text: buildSimpleHrTemplate({
+        lines: [`A user account was created for ${emailNorm}.`, `Role: ${role}`],
+      }),
+      metadata: { email: emailNorm, role },
+    });
+    return { ok: true, success: true, message: "User account created successfully." };
   } catch (e) {
+    const clientMessage = safeCreateUserMessageForClient(e);
+    console.error("[createUserAction] failed", {
+      email: emailNorm,
+      role,
+      employeeId: employeeId ?? null,
+      message: e instanceof Error ? e.message : String(e),
+    });
     await createSystemAuditLog({
       actorUserId: actorId,
       module: "User Accounts",
@@ -177,16 +282,12 @@ export async function createUserAction(input: unknown): Promise<UserMutationResu
       targetType: "user",
       targetLabel: createdUserTargetLabel,
       success: false,
-      failureReason: "Failed to create user. Please try again.",
+      failureReason: clientMessage,
       ipAddress: ip,
       deviceName: deviceLabel,
       userAgent,
     });
-    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-      return { ok: false, message: "You cannot remove the last active administrator." };
-    }
-    console.error("[createUserAction]", e);
-    return { ok: false, message: "Failed to update user role. Please try again." };
+    return { ok: false, success: false, message: clientMessage };
   }
 }
 
@@ -198,12 +299,13 @@ export async function updateUserRoleAction(input: unknown): Promise<UserMutation
     const roleIssue = parsed.error.issues.some((issue) => issue.path[0] === "role");
     return {
       ok: false,
-      message: roleIssue ? "Invalid role selected." : "Invalid request.",
+      message: roleIssue ? "Please select a valid user role." : "Invalid request.",
     };
   }
 
-  const { userId, role } = parsed.data;
+  const { userId, role, confirmationAccepted, reason } = parsed.data;
   const targetLabel = await resolveUserAuditTargetLabel(userId);
+  const roleSafetySettings = await getRoleSafetySettings();
 
   const actorId = await requireSessionUserId();
 
@@ -262,7 +364,26 @@ export async function updateUserRoleAction(input: unknown): Promise<UserMutation
   const beforeNorm = normalizeUserRole(beforeRoleRaw);
   const afterNorm = normalizeUserRole(role);
 
-  if (beforeNorm === "administrator" && afterNorm !== "administrator") {
+  if (roleSafetySettings.requireRoleChangeConfirmation && confirmationAccepted !== true) {
+    return { ok: false, message: "Role change confirmation is required." };
+  }
+  if (roleSafetySettings.requirePermissionChangeReason && !reason?.trim()) {
+    return { ok: false, message: "A reason is required for permission changes." };
+  }
+  if (
+    roleSafetySettings.preventAdminSelfDemotion &&
+    actorId === userId &&
+    beforeNorm === "administrator" &&
+    afterNorm !== "administrator"
+  ) {
+    return { ok: false, message: "You cannot demote your own administrator role." };
+  }
+
+  if (
+    roleSafetySettings.preventLastAdminRemoval &&
+    beforeNorm === "administrator" &&
+    afterNorm !== "administrator"
+  ) {
     const soleRemainingAdmin = await isLastActiveAdministrator(userId);
     if (soleRemainingAdmin) {
       await createSystemAuditLog({
@@ -327,10 +448,21 @@ export async function updateUserRoleAction(input: unknown): Promise<UserMutation
             format: "text",
           },
         ],
+        reason: reason?.trim() || null,
       },
       ipAddress: ip,
       deviceName: deviceLabel,
       userAgent,
+    });
+    await sendHrNotification({
+      notificationType: "user_role_changed",
+      settingKey: "sendSecurityAdminAlerts",
+      recipientMode: "hr_only",
+      subject: "User Role Changed",
+      text: buildSimpleHrTemplate({
+        lines: [`User: ${target.email}`, `Role changed to: ${role}`],
+      }),
+      metadata: { userId, role, beforeRole: beforeRoleRaw },
     });
     return { ok: true, message: "Role updated successfully." };
   } catch (e) {
@@ -374,7 +506,8 @@ export async function deactivateUserAction(userId: string): Promise<UserMutation
     });
     return { ok: false };
   }
-  if (await isLastActiveAdministrator(userId)) {
+  const roleSafetySettings = await getRoleSafetySettings();
+  if (roleSafetySettings.preventLastAdminRemoval && (await isLastActiveAdministrator(userId))) {
     return { ok: false, message: "You cannot remove the last active administrator." };
   }
 
@@ -395,6 +528,14 @@ export async function deactivateUserAction(userId: string): Promise<UserMutation
       ipAddress: ip,
       deviceName: deviceLabel,
       userAgent,
+    });
+    await sendHrNotification({
+      notificationType: "user_deactivated",
+      settingKey: "sendSecurityAdminAlerts",
+      recipientMode: "hr_only",
+      subject: "User Deactivated",
+      text: buildSimpleHrTemplate({ lines: [`A user account was deactivated.`, `User ID: ${userId}`] }),
+      metadata: { userId },
     });
     return { ok: true };
   } catch {
@@ -437,7 +578,8 @@ export async function deleteUserPermanentlyAction(userId: string): Promise<UserM
     });
     return { ok: false };
   }
-  if (await isLastActiveAdministrator(userId)) {
+  const roleSafetySettings = await getRoleSafetySettings();
+  if (roleSafetySettings.preventLastAdminRemoval && (await isLastActiveAdministrator(userId))) {
     return { ok: false, message: "You cannot remove the last active administrator." };
   }
 
@@ -455,6 +597,14 @@ export async function deleteUserPermanentlyAction(userId: string): Promise<UserM
       ipAddress: ip,
       deviceName: deviceLabel,
       userAgent,
+    });
+    await sendHrNotification({
+      notificationType: "user_deleted",
+      settingKey: "sendSecurityAdminAlerts",
+      recipientMode: "hr_only",
+      subject: "User Deleted",
+      text: buildSimpleHrTemplate({ lines: [`A user account was deleted.`, `User ID: ${userId}`] }),
+      metadata: { userId },
     });
     return { ok: true };
   } catch {
@@ -511,6 +661,14 @@ export async function changeOwnPasswordAction(input: unknown): Promise<PasswordC
   }
 
   const { newPassword } = parsed.data;
+  const passwordPolicy = await getPasswordPolicySettings();
+  const passwordIssue = validatePasswordAgainstPolicy(newPassword, passwordPolicy);
+  if (passwordIssue) {
+    return {
+      success: false,
+      message: passwordIssue,
+    };
+  }
 
   try {
     const updated = await prisma.$executeRaw(

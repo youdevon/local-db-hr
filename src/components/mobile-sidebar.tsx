@@ -5,7 +5,9 @@ import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
 import * as React from "react";
 
+import { NavDatabaseIcon } from "@/components/nav-database-icon";
 import { SidebarFooter } from "@/components/sidebar-footer";
+import type { SidebarLicenseIndicator } from "@/components/sidebar-footer-tray";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -14,12 +16,16 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { brandIcon, getSidebarNavForRole } from "@/config/navigation";
+import { getSidebarNavForRole } from "@/config/navigation";
 import { cn } from "@/lib/utils";
 
-const BrandIcon = brandIcon;
-
-export function MobileSidebar({ role }: { role: string }) {
+export function MobileSidebar({
+  role,
+  licenseIndicator = null,
+}: {
+  role: string;
+  licenseIndicator?: SidebarLicenseIndicator | null;
+}) {
   const pathname = usePathname();
   const [open, setOpen] = React.useState(false);
   const navItems = getSidebarNavForRole(role);
@@ -34,11 +40,8 @@ export function MobileSidebar({ role }: { role: string }) {
       </SheetTrigger>
       <SheetContent side="left" className="w-72 p-0">
         <SheetHeader className="border-border border-b px-4 py-4 text-left">
-          <SheetTitle className="flex items-center gap-2">
-            <span className="bg-primary/10 text-primary inline-flex size-9 items-center justify-center rounded-lg">
-              <BrandIcon className="size-5" />
-            </span>
-            <span className="truncate">Local DB HR</span>
+          <SheetTitle className="font-heading text-base font-bold">
+            <NavDatabaseIcon onClick={() => setOpen(false)} />
           </SheetTitle>
         </SheetHeader>
         <nav className="max-h-[calc(100vh-12rem)] space-y-0.5 overflow-y-auto px-2 py-4">
@@ -66,7 +69,7 @@ export function MobileSidebar({ role }: { role: string }) {
             );
           })}
         </nav>
-        <SidebarFooter />
+        <SidebarFooter licenseIndicator={licenseIndicator} />
       </SheetContent>
     </Sheet>
   );

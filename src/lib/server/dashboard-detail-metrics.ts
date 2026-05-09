@@ -3,7 +3,10 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 
 import { formatDateLabel, formatLeaveDays, getLeaveTypeLabel } from "@/lib/leave";
+import { getLeaveLowThresholdDays, getLeaveWarningSettings } from "@/lib/leave-warning-settings";
 import { prisma } from "@/lib/prisma";
+import { DEFAULT_RETIREMENT_AGE_POLICY, calculateRetirementDate } from "@/lib/retirement-policy";
+import { getRetirementAgePolicySettings } from "@/lib/retirement-policy-settings";
 import { getLeaveSearchRowsFromDatabase } from "@/lib/server/leave-search";
 import { parseDaysLabel } from "@/lib/sort-compare";
 import type { StatusTone } from "@/components/status-badge";
@@ -106,18 +109,18 @@ function toStatusCell(label: string): DashboardDetailCell {
 }
 
 async function getConfiguredRetirementAge(): Promise<number> {
-  const rows = await prisma.$queryRaw<Array<{ setting_value: unknown }>>(Prisma.sql`
-    SELECT setting_value
-    FROM public.app_settings
-    WHERE setting_key = 'retirement_age_policy'
-    LIMIT 1
-  `);
-  const value = rows[0]?.setting_value;
-  if (!value || typeof value !== "object") return 60;
-  const objectValue = value as Record<string, unknown>;
-  const age = Number(objectValue.retirementAge ?? objectValue.retirement_age ?? 60);
-  if (!Number.isFinite(age) || age < 18 || age > 100) return 60;
-  return Math.round(age);
+  try {
+    const policy = await getRetirementAgePolicySettings();
+    return policy.retirementAge;
+  } catch {
+    return DEFAULT_RETIREMENT_AGE_POLICY.retirementAge;
+  }
+}
+
+function getRetirementWarningTitle(years: number): string {
+  if (years <= 0) return "At Retirement Age";
+  if (years === 1) return "Reaching Retirement Age Within 1 Year";
+  return `Reaching Retirement Age Within ${years} Years`;
 }
 
 export async function getDashboardMetricDetails(metric: string): Promise<DashboardMetricDetails | null> {
@@ -356,6 +359,7 @@ export async function getDashboardMetricDetails(metric: string): Promise<Dashboa
   const retirementAge = await getConfiguredRetirementAge();
 
   if (metric === "employees-over-retirement-age") {
+    const retirementYears = Math.trunc(Number(retirementAge)) || 0;
     const rows = await prisma.$queryRaw<
       Array<{
         id: string;
@@ -379,7 +383,7 @@ export async function getDashboardMetricDetails(metric: string): Promise<Dashboa
         DATE_PART('year', AGE(CURRENT_DATE, date_of_birth))::int AS age
       FROM public.employees
       WHERE date_of_birth IS NOT NULL
-        AND DATE_PART('year', AGE(CURRENT_DATE, date_of_birth)) >= ${retirementAge}
+        AND (date_of_birth + make_interval(years => CAST(${retirementYears} AS INTEGER)))::date <= CURRENT_DATE
       ORDER BY age DESC, last_name, first_name
     `);
     return {
@@ -410,6 +414,8 @@ export async function getDashboardMetricDetails(metric: string): Promise<Dashboa
   }
 
   if (metric === "retirement-within-one-year") {
+    const policy = await getRetirementAgePolicySettings();
+    const warningYearsBeforeRetirement = policy.warningYearsBeforeRetirement;
     const rows = await prisma.$queryRaw<
       Array<{
         id: string;
@@ -434,30 +440,37 @@ export async function getDashboardMetricDetails(metric: string): Promise<Dashboa
     `);
     const today = new Date();
     const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const nextYear = new Date(todayDate.getFullYear() + 1, todayDate.getMonth(), todayDate.getDate());
+    const warningCutoffDate = new Date(todayDate);
+    warningCutoffDate.setFullYear(warningCutoffDate.getFullYear() + warningYearsBeforeRetirement);
     const mapped = rows
       .map((row) => {
         const dob = new Date(row.date_of_birth);
-        const retirementDate = new Date(dob.getFullYear() + retirementAge, dob.getMonth(), dob.getDate());
-        const retirementDateOnly = new Date(
-          retirementDate.getFullYear(),
-          retirementDate.getMonth(),
-          retirementDate.getDate(),
+        const retirementDateIso = calculateRetirementDate(dob.toISOString().slice(0, 10), retirementAge);
+        if (!retirementDateIso) return null;
+        const retirementDateOnly = new Date(`${retirementDateIso}T00:00:00`);
+        const currentAge = Math.max(
+          0,
+          Math.floor((todayDate.getTime() - dob.getTime()) / (365.25 * 24 * 60 * 60 * 1000)),
         );
         const daysUntilRetirement = Math.floor(
           (retirementDateOnly.getTime() - todayDate.getTime()) / (24 * 60 * 60 * 1000),
         );
         return {
           ...row,
+          currentAge,
           retirementDateOnly,
           daysUntilRetirement,
         };
       })
-      .filter((row) => row.retirementDateOnly > todayDate && row.retirementDateOnly <= nextYear)
+      .filter((row): row is NonNullable<typeof row> => row != null)
+      .filter((row) => row.retirementDateOnly >= todayDate && row.retirementDateOnly <= warningCutoffDate)
       .sort((a, b) => a.retirementDateOnly.getTime() - b.retirementDateOnly.getTime());
     return {
-      title: "Reaching Retirement Age Within 1 Year",
-      description: "Employees who will reach the configured retirement age within one year.",
+      title: getRetirementWarningTitle(warningYearsBeforeRetirement),
+      description:
+        warningYearsBeforeRetirement <= 0
+          ? `Employees who are at retirement age based on configured retirement age ${retirementAge}.`
+          : `Employees who will reach configured retirement age ${retirementAge} within ${warningYearsBeforeRetirement} year${warningYearsBeforeRetirement === 1 ? "" : "s"}.`,
       icon: "calendar-clock",
       columns: [
         { key: "fileNumber", label: "File #" },
@@ -465,8 +478,11 @@ export async function getDashboardMetricDetails(metric: string): Promise<Dashboa
         { key: "department", label: "Department" },
         { key: "position", label: "Position" },
         { key: "dateOfBirth", label: "Date of Birth" },
+        { key: "currentAge", label: "Current Age", sortKey: "currentAge" },
+        { key: "retirementAge", label: "Retirement Age Used", sortKey: "retirementAge" },
         { key: "retirementDate", label: "Retirement Date", sortKey: "retirementDateIso" },
         { key: "daysUntilRetirement", label: "Days Until Retirement", sortKey: "sortDaysUntilRetirement" },
+        { key: "status", label: "Status" },
       ],
       rows: mapped.map((row) => ({
         fileNumber: row.file_number || "—",
@@ -474,13 +490,23 @@ export async function getDashboardMetricDetails(metric: string): Promise<Dashboa
         department: row.department?.trim() || "—",
         position: row.position?.trim() || "—",
         dateOfBirth: formatDateLabel(row.date_of_birth.toISOString().slice(0, 10)),
+        currentAge: row.currentAge,
+        retirementAge,
         retirementDate: formatDateLabel(row.retirementDateOnly.toISOString().slice(0, 10)),
         retirementDateIso: row.retirementDateOnly.toISOString().slice(0, 10),
         daysUntilRetirement: formatDays(row.daysUntilRetirement),
         sortDaysUntilRetirement: row.daysUntilRetirement,
+        status: toStatusCell(
+          warningYearsBeforeRetirement <= 0
+            ? "At Retirement Age"
+            : `Reaching retirement age within ${warningYearsBeforeRetirement} year${warningYearsBeforeRetirement === 1 ? "" : "s"}`,
+        ),
         href: `/employees/${row.id}`,
       })),
-      emptyMessage: "No employees are projected to reach retirement age within one year.",
+      emptyMessage:
+        warningYearsBeforeRetirement <= 0
+          ? "No employees are currently at retirement age."
+          : `No employees are projected to reach retirement age within ${warningYearsBeforeRetirement} year${warningYearsBeforeRetirement === 1 ? "" : "s"}.`,
     };
   }
 
@@ -515,12 +541,15 @@ export async function getDashboardMetricDetails(metric: string): Promise<Dashboa
     const mapped = rows
       .map((row) => {
         const dob = new Date(row.date_of_birth);
-        const retirementDate = new Date(dob.getFullYear() + retirementAge, dob.getMonth(), dob.getDate());
+        const retirementDateIso = calculateRetirementDate(dob.toISOString().slice(0, 10), retirementAge);
+        if (!retirementDateIso) return null;
+        const retirementDate = new Date(`${retirementDateIso}T00:00:00`);
         const cutoff = new Date(retirementDate.getFullYear(), retirementDate.getMonth(), retirementDate.getDate() - 1);
         const contractEnd = new Date(row.end_date);
         const daysBeyondCutoff = Math.floor((contractEnd.getTime() - cutoff.getTime()) / (24 * 60 * 60 * 1000));
         return { ...row, cutoff, daysBeyondCutoff };
       })
+      .filter((row): row is NonNullable<typeof row> => row != null)
       .filter((row) => row.daysBeyondCutoff > 0)
       .sort((a, b) => b.daysBeyondCutoff - a.daysBeyondCutoff);
     return {
@@ -663,9 +692,12 @@ export async function getDashboardMetricDetails(metric: string): Promise<Dashboa
   }
 
   const leaveRows = await getLeaveSearchRowsFromDatabase();
-  const lowRows = leaveRows.filter(
-    (row) => row.status === "Low" || row.status === "Exhausted" || row.status === "Overused",
-  );
+  const leaveWarningSettings = await getLeaveWarningSettings();
+  const lowRows = leaveRows.filter((row) => {
+    if (!leaveWarningSettings.showLowLeaveBadge) return false;
+    if (row.status === "Overused" || row.status === "Exhausted") return true;
+    return leaveWarningSettings.warnWhenRemainingAtOrBelowThreshold && row.status === "Low";
+  });
   const statusRank: Record<string, number> = { Low: 1, Exhausted: 2, Overused: 3 };
   const uniqueByEmployee = new Map<string, (typeof lowRows)[number]>();
   for (const row of lowRows) {
@@ -689,25 +721,29 @@ export async function getDashboardMetricDetails(metric: string): Promise<Dashboa
       { key: "fileNumber", label: "File #" },
       { key: "fullName", label: "First and Last Name" },
       { key: "leaveType", label: "Leave Type" },
-      { key: "contractPeriod", label: "Contract Period" },
-      { key: "available", label: "Available", sortKey: "sortAvailable" },
+      { key: "entitlement", label: "Entitlement / Total", sortKey: "sortEntitlement" },
       { key: "used", label: "Used", sortKey: "sortUsed" },
       { key: "remaining", label: "Remaining", sortKey: "sortRemaining" },
+      { key: "thresholdUsed", label: "Threshold Used", sortKey: "sortThresholdUsed" },
       { key: "status", label: "Status", sortKey: "sortStatusRank" },
     ],
     rows: dedupedRows.map((row) => ({
       fileNumber: row.fileNumber || "—",
       fullName: row.fullName,
       leaveType: getLeaveTypeLabel(row.leaveType),
-      contractPeriod: row.contractPeriod || "—",
-      available: row.availableText || "—",
+      entitlement: row.availableText || "—",
       used: row.usedText || "—",
       remaining: row.remainingText || "—",
-      sortAvailable: parseLeaveDaysForSort(row.availableText),
+      sortEntitlement: parseLeaveDaysForSort(row.availableText),
       sortUsed: parseLeaveDaysForSort(row.usedText),
       sortRemaining: parseLeaveDaysForSort(row.remainingText),
+      thresholdUsed: formatDays(getLeaveLowThresholdDays(leaveWarningSettings, row.leaveType)),
+      sortThresholdUsed: getLeaveLowThresholdDays(leaveWarningSettings, row.leaveType),
       sortStatusRank: statusRank[row.status] ?? 0,
-      status: toStatusCell(row.status),
+      status:
+        row.status === "Low"
+          ? toStatusCell(`Low ${getLeaveTypeLabel(row.leaveType)} Leave`)
+          : toStatusCell(row.status),
       href: `/leave/employee/${row.employeeId}`,
     })),
     emptyMessage: "No low leave balances found.",

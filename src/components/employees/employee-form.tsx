@@ -8,9 +8,23 @@ import { useEffect, useState } from "react";
 import { Controller, useFieldArray, useForm, type SubmitErrorHandler } from "react-hook-form";
 
 import { Button, buttonVariants } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { createEmployeeAction, updateEmployeeAction } from "@/actions/employees";
+import {
+  createEmployeeAction,
+  deleteEmployeeAction,
+  updateEmployeeAction,
+  type DeleteEmployeeMode,
+} from "@/actions/employees";
 import {
   EMPLOYEE_ID_TYPES,
   GENDER_OPTIONS,
@@ -22,6 +36,7 @@ import {
   notifyError,
   notifyItemCreateFailed,
   notifyItemCreated,
+  notifyItemDeleted,
   notifyItemUpdateFailed,
   notifyItemUpdated,
 } from "@/lib/notify";
@@ -69,11 +84,21 @@ export type EmployeeFormProps = {
   employeeId?: string;
   initialValues?: EmployeeFormValues;
   existingEmployees: EmployeeRecord[];
+  canDelete?: boolean;
 };
 
-export function EmployeeForm({ mode, employeeId, initialValues, existingEmployees }: EmployeeFormProps) {
+export function EmployeeForm({
+  mode,
+  employeeId,
+  initialValues,
+  existingEmployees,
+  canDelete = false,
+}: EmployeeFormProps) {
   const router = useRouter();
   const [photoBroken, setPhotoBroken] = useState(false);
+  const [deleteOptionsOpen, setDeleteOptionsOpen] = useState(false);
+  const [confirmDeleteMode, setConfirmDeleteMode] = useState<DeleteEmployeeMode | null>(null);
+  const [deletePending, setDeletePending] = useState(false);
 
   const form = useForm<EmployeeFormValues>({
     resolver: zodResolver(employeeFormSchema),
@@ -148,7 +173,7 @@ export function EmployeeForm({ mode, employeeId, initialValues, existingEmployee
     ) {
       return {
         success: false,
-        message: "File number already exists. Please use a unique file number.",
+        message: "File number already exists.",
       };
     }
 
@@ -210,7 +235,7 @@ export function EmployeeForm({ mode, employeeId, initialValues, existingEmployee
     if (existingRows.some((employee) => employee.fileNumber.trim().toLowerCase() === normalizedFileNumber)) {
       return {
         success: false,
-        message: "File number already exists. Please use a unique file number.",
+        message: "File number already exists.",
       };
     }
 
@@ -314,6 +339,27 @@ export function EmployeeForm({ mode, employeeId, initialValues, existingEmployee
     }
   }
 
+  async function handleDelete(modeToDelete: DeleteEmployeeMode) {
+    if (!employeeId) return;
+    setDeletePending(true);
+    try {
+      const result = await deleteEmployeeAction(employeeId, modeToDelete);
+      if (!result.success) {
+        notifyError(result.message || "Failed to delete employee. Please try again.");
+        return;
+      }
+      notifyItemDeleted("employee");
+      router.push("/employees");
+      router.refresh();
+    } catch (err) {
+      const msg = err instanceof Error && err.message ? err.message : "Failed to delete employee. Please try again.";
+      notifyError(msg);
+    } finally {
+      setDeletePending(false);
+      setConfirmDeleteMode(null);
+    }
+  }
+
   const initials =
     `${firstName?.[0] ?? ""}${lastName?.[0] ?? ""}`.trim().toUpperCase() || "?";
 
@@ -322,7 +368,7 @@ export function EmployeeForm({ mode, employeeId, initialValues, existingEmployee
     <section className={cn(floatingCard, "space-y-4")}>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-foreground text-base font-semibold tracking-tight">Identification Details</h2>
+          <h2 className="font-heading text-foreground text-base font-bold tracking-tight">Identification Details</h2>
           <p className="text-muted-foreground text-sm">
             Employees may have multiple identification records. ID numbers must be unique and duplicate ID numbers
             will not be allowed.
@@ -430,7 +476,7 @@ export function EmployeeForm({ mode, employeeId, initialValues, existingEmployee
     <form onSubmit={handleSubmit(onSubmit, onInvalidSubmit)} className="space-y-6">
       <section className={cn(floatingCard, "space-y-4")}>
         <div>
-          <h2 className="text-foreground text-base font-semibold tracking-tight">Personal details</h2>
+          <h2 className="font-heading text-foreground text-base font-bold tracking-tight">Personal details</h2>
           <p className="text-muted-foreground text-sm">Legal name and personal attributes.</p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -501,7 +547,7 @@ export function EmployeeForm({ mode, employeeId, initialValues, existingEmployee
 
       <section className={cn(floatingCard, "space-y-4")}>
         <div>
-          <h2 className="text-foreground text-base font-semibold tracking-tight">Address Information</h2>
+          <h2 className="font-heading text-foreground text-base font-bold tracking-tight">Address Information</h2>
           <p className="text-muted-foreground text-sm">Residential and mailing address details.</p>
         </div>
         <div className="space-y-4">
@@ -582,7 +628,7 @@ export function EmployeeForm({ mode, employeeId, initialValues, existingEmployee
 
       <section className={cn(floatingCard, "space-y-4")}>
         <div>
-          <h2 className="text-foreground text-base font-semibold tracking-tight">Emergency Contact Information</h2>
+          <h2 className="font-heading text-foreground text-base font-bold tracking-tight">Emergency Contact Information</h2>
           <p className="text-muted-foreground text-sm">Emergency contacts and next of kin records.</p>
         </div>
         <div className="space-y-4">
@@ -665,7 +711,7 @@ export function EmployeeForm({ mode, employeeId, initialValues, existingEmployee
 
       <section className={cn(floatingCard, "space-y-4")}>
         <div>
-          <h2 className="text-foreground text-base font-semibold tracking-tight">
+          <h2 className="font-heading text-foreground text-base font-bold tracking-tight">
             Right to Work / Immigration Information
           </h2>
           <p className="text-muted-foreground text-sm">
@@ -715,7 +761,7 @@ export function EmployeeForm({ mode, employeeId, initialValues, existingEmployee
 
       <section className={cn(floatingCard, "space-y-4")}>
         <div>
-          <h2 className="text-foreground text-base font-semibold tracking-tight">Photo</h2>
+          <h2 className="font-heading text-foreground text-base font-bold tracking-tight">Photo</h2>
           <p className="text-muted-foreground text-sm">Image URL for the employee portrait (preview only for now).</p>
         </div>
         <Field label="Photo URL" error={errors.photoUrl?.message}>
@@ -747,10 +793,82 @@ export function EmployeeForm({ mode, employeeId, initialValues, existingEmployee
         <Button type="submit" disabled={isSubmitting} className="min-w-[10rem]">
           {mode === "create" ? "Save Employee" : "Save changes"}
         </Button>
+        {mode === "edit" && employeeId && canDelete ? (
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={isSubmitting || deletePending}
+            onClick={() => setDeleteOptionsOpen(true)}
+          >
+            Delete
+          </Button>
+        ) : null}
         <Link href={cancelHref} className={buttonVariants({ variant: "outline" })}>
           Cancel
         </Link>
       </div>
+
+      <Dialog open={deleteOptionsOpen} onOpenChange={setDeleteOptionsOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete Employee</DialogTitle>
+            <DialogDescription>
+              Choose how you want to delete this employee record. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-col gap-2 sm:flex-col">
+            <Button
+              type="button"
+              variant="destructive"
+              className="w-full"
+              disabled={deletePending}
+              onClick={() => {
+                setDeleteOptionsOpen(false);
+                setConfirmDeleteMode("employee_only");
+              }}
+            >
+              Delete Employee Only
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              className="w-full"
+              disabled={deletePending}
+              onClick={() => {
+                setDeleteOptionsOpen(false);
+                setConfirmDeleteMode("employee_and_contracts");
+              }}
+            >
+              Delete Employee and Contracts
+            </Button>
+            <Button type="button" variant="outline" className="w-full" onClick={() => setDeleteOptionsOpen(false)}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={confirmDeleteMode === "employee_only"}
+        onOpenChange={(open) => !open && setConfirmDeleteMode(null)}
+        title="Confirm Delete Employee Only"
+        description="This deletes the employee and employee-level leave records only. If contracts still exist, deletion will be blocked and you should use Delete Employee and Contracts instead."
+        confirmLabel="Delete Employee Only"
+        confirmVariant="destructive"
+        pending={deletePending}
+        onConfirm={() => handleDelete("employee_only")}
+      />
+
+      <ConfirmDialog
+        open={confirmDeleteMode === "employee_and_contracts"}
+        onOpenChange={(open) => !open && setConfirmDeleteMode(null)}
+        title="Confirm Delete Employee and Contracts"
+        description="This deletes the employee, all related contracts, contract child records, and leave records linked to the employee and those contracts."
+        confirmLabel="Delete Employee and Contracts"
+        confirmVariant="destructive"
+        pending={deletePending}
+        onConfirm={() => handleDelete("employee_and_contracts")}
+      />
     </form>
   );
 }

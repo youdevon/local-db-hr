@@ -13,7 +13,6 @@ import {
   Users,
 } from "lucide-react";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 
 import { PageHeader } from "@/components/page-header";
 import { SectionCard } from "@/components/section-card";
@@ -29,6 +28,12 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+function getRetirementWarningTitle(years: number): string {
+  if (years <= 0) return "At Retirement Age";
+  if (years === 1) return "Reaching Retirement Age Within 1 Year";
+  return `Reaching Retirement Age Within ${years} Years`;
+}
+
 const metricSurface = cn(
   "rounded-xl border border-border bg-card shadow-[0_8px_24px_rgba(15,23,42,0.08)] transition-[box-shadow,transform] duration-200",
   "hover:-translate-y-0.5 hover:shadow-[0_12px_28px_rgba(15,23,42,0.12)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.35)] dark:hover:shadow-[0_12px_28px_rgba(0,0,0,0.45)]",
@@ -37,7 +42,32 @@ const metricSurface = cn(
 export default async function DashboardPage() {
   const session = await getSession();
   const role = normalizeUserRole(session.user?.role);
-  if (role === "member") redirect("/profile");
+  if (role === "member") {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          hideBreadcrumbNav
+          title="Dashboard"
+          icon="layout-dashboard"
+          description="Welcome. Use your profile to view your information and update your contact details when an employee record is linked to your account."
+        />
+        <section className="grid gap-4 sm:grid-cols-2">
+          <Link
+            href="/profile"
+            className={cn(
+              metricSurface,
+              "block cursor-pointer rounded-xl border p-4 sm:p-5",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2",
+            )}
+          >
+            <p className="text-sm font-medium text-muted-foreground">My profile</p>
+            <p className="mt-1 text-lg font-semibold text-foreground">View or update your details</p>
+            <p className="text-muted-foreground mt-2 text-xs">Personal information, contract & leave (if linked)</p>
+          </Link>
+        </section>
+      </div>
+    );
+  }
 
   const metrics = await getDashboardMetrics();
 
@@ -82,9 +112,13 @@ export default async function DashboardPage() {
               href="/dashboard/details/employees-over-retirement-age"
             />
             <MetricCard
-              title="Reaching Retirement Age Within 1 Year"
+              title={getRetirementWarningTitle(metrics.retirement.warningYearsBeforeRetirement)}
               value={metrics.employeesReachingRetirementWithinOneYear}
-              subtext="Reaching retirement age within 1 year"
+              subtext={
+                metrics.retirement.warningYearsBeforeRetirement <= 0
+                  ? `Based on retirement age ${metrics.retirement.retirementAge}`
+                  : `Based on retirement age ${metrics.retirement.retirementAge} and a ${metrics.retirement.warningYearsBeforeRetirement}-year warning period`
+              }
               icon={CalendarClock}
               href="/dashboard/details/retirement-within-one-year"
             />
@@ -101,13 +135,20 @@ export default async function DashboardPage() {
 
       <section className="space-y-5">
         <SectionCard title="Contracts & Compliance">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <MetricCard
               title="Contracts Expiring in 90 Days"
               value={metrics.contractsExpiringIn90Days}
               subtext="Contracts ending within 90 days"
               icon={FileClock}
               href="/dashboard/details/contracts-expiring-90-days"
+            />
+            <MetricCard
+              title="Expired Contracts - No New Contract"
+              value={metrics.contracts.expiredContractsNoNew}
+              subtext="Employees with expired latest contracts and no active or future renewal"
+              icon={AlertTriangle}
+              href="/contracts/expired-no-new"
             />
             <MetricCard
               title="Employees With No Contract on File"

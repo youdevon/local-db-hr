@@ -30,6 +30,10 @@ model User {
   audit_logs                                                LoginAuditLog[]
   system_audit_logs                                         SystemAuditLog[]
   profile                                                   UserProfile?
+  qualifications_created                                    employee_qualifications[]       @relation("QualificationCreatedBy")
+  qualifications_updated                                  employee_qualifications[]       @relation("QualificationUpdatedBy")
+  qualification_groups_created                            employee_qualification_groups[] @relation("QualificationGroupCreatedBy")
+  qualification_groups_updated                            employee_qualification_groups[] @relation("QualificationGroupUpdatedBy")
 
   @@index([email], map: "idx_users_email")
   @@index([is_active], map: "idx_users_is_active")
@@ -42,7 +46,7 @@ model UserProfile {
   user_id     String     @unique @map("user_id") @db.Uuid
   full_name   String     @map("full_name")
   initials    String?    @db.VarChar(5)
-  role        String     @default("Administrator") @map("role")
+  role        String     @default("contributor") @map("role")
   department  String?    @map("department")
   created_at  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updated_at  DateTime   @default(now()) @map("updated_at") @db.Timestamptz(6)
@@ -215,20 +219,22 @@ model employee_addresses {
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model employee_documents {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  employee_id   String    @db.Uuid
-  document_name String
-  document_type String
-  issue_date    DateTime? @db.Date
-  expiry_date   DateTime? @db.Date
-  file_url      String?
-  status        String    @default("uploaded")
-  uploaded_by   String?   @db.Uuid
-  uploaded_at   DateTime  @default(now()) @db.Timestamptz(6)
-  created_at    DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at    DateTime  @default(now()) @db.Timestamptz(6)
-  employees     employees @relation(fields: [employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users         User?     @relation(fields: [uploaded_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                             String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id                    String                          @db.Uuid
+  document_name                  String
+  document_type                  String
+  issue_date                     DateTime?                       @db.Date
+  expiry_date                    DateTime?                       @db.Date
+  file_url                       String?
+  status                         String                          @default("uploaded")
+  uploaded_by                    String?                         @db.Uuid
+  uploaded_at                    DateTime                        @default(now()) @db.Timestamptz(6)
+  created_at                     DateTime                        @default(now()) @db.Timestamptz(6)
+  updated_at                     DateTime                        @default(now()) @db.Timestamptz(6)
+  employees                      employees                       @relation(fields: [employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                          User?                           @relation(fields: [uploaded_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  employee_qualifications        employee_qualifications[]       @relation("QualificationEvidence")
+  employee_qualification_groups  employee_qualification_groups[] @relation("QualificationGroupEvidence")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -290,6 +296,78 @@ model employee_position_history {
   employees               employees @relation(fields: [employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
+model employee_qualification_groups {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id           String    @db.Uuid
+  qualification_system  String    @map("qualification_system")
+  sitting_year          Int
+  institution           String?
+  awarding_body         String?
+  level                 String?
+  notes                 String?
+  document_id           String?   @db.Uuid
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime  @default(now()) @db.Timestamptz(6)
+  created_by            String?   @db.Uuid
+  updated_by            String?   @db.Uuid
+  employees             employees @relation(fields: [employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  evidence_document     employee_documents? @relation("QualificationGroupEvidence", fields: [document_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  created_by_user       User?     @relation("QualificationGroupCreatedBy", fields: [created_by], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  updated_by_user       User?     @relation("QualificationGroupUpdatedBy", fields: [updated_by], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  subjects              employee_qualification_subjects[]
+
+  @@index([employee_id], map: "idx_employee_qualification_groups_employee_id")
+  @@map("employee_qualification_groups")
+}
+
+model employee_qualification_subjects {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  group_id       String    @db.Uuid
+  subject_name   String
+  level_or_unit  String?
+  grade_result   String?
+  remarks        String?
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime  @default(now()) @db.Timestamptz(6)
+  group          employee_qualification_groups @relation(fields: [group_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([group_id], map: "idx_employee_qualification_subjects_group_id")
+  @@map("employee_qualification_subjects")
+}
+
+model employee_qualifications {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  employee_id          String    @db.Uuid
+  qualification_title  String
+  /// Mirrors qualification subject label; required when DB enforces NOT NULL on column `title`.
+  title                String
+  institution          String?
+  qualification_level  String?
+  field_of_study       String?
+  date_awarded         DateTime? @db.Date
+  expiry_date          DateTime? @db.Date
+  document_id          String?   @db.Uuid
+  category            String    @default("custom_other")
+  qualification_type  String    @default("other")
+  awarding_body        String?
+  grade_result         String?
+  has_expiry           Boolean   @default(false)
+  verification_status  String    @default("not_required")
+  status               String    @default("active")
+  notes                String?
+  created_at           DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime  @default(now()) @db.Timestamptz(6)
+  created_by           String?   @db.Uuid
+  updated_by           String?   @db.Uuid
+  employees            employees @relation(fields: [employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  evidence_document    employee_documents? @relation("QualificationEvidence", fields: [document_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  created_by_user      User?     @relation("QualificationCreatedBy", fields: [created_by], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  updated_by_user      User?     @relation("QualificationUpdatedBy", fields: [updated_by], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([employee_id], map: "idx_employee_qualifications_employee_id")
+  @@map("employee_qualifications")
+}
+
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model employee_right_to_work {
   id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -333,10 +411,12 @@ model employees {
   updated_at                  DateTime                      @default(now()) @db.Timestamptz(6)
   contracts                   contracts[]
   employee_addresses          employee_addresses[]
-  employee_documents          employee_documents[]
-  employee_emergency_contacts employee_emergency_contacts[]
-  employee_identifications    employee_identifications[]
-  employee_position_history   employee_position_history[]
+  employee_documents             employee_documents[]
+  employee_emergency_contacts    employee_emergency_contacts[]
+  employee_identifications       employee_identifications[]
+  employee_position_history      employee_position_history[]
+  employee_qualifications        employee_qualifications[]
+  employee_qualification_groups  employee_qualification_groups[]
   employee_right_to_work      employee_right_to_work?
   leave_transactions          leave_transactions[]
   leave_year_balances         leave_year_balances[]
@@ -446,4 +526,26 @@ model leave_year_balances {
   @@index([year_start_date, year_end_date], map: "idx_leave_year_balances_year_dates")
   @@index([employee_id, contract_id], map: "idx_leave_year_balances_employee_contract")
   @@index([contract_year_number], map: "idx_leave_year_balances_year")
+}
+
+model email_notification_logs {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  notification_type String
+  employee_id       String?   @db.Uuid
+  contract_id       String?   @db.Uuid
+  leave_balance_id  String?   @db.Uuid
+  recipient_email   String?
+  cc_email          String?
+  subject           String
+  status            String
+  error_message     String?
+  sent_at           DateTime? @db.Timestamptz(6)
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  metadata          Json?
+
+  @@index([notification_type], map: "idx_email_notification_logs_type")
+  @@index([status], map: "idx_email_notification_logs_status")
+  @@index([employee_id], map: "idx_email_notification_logs_employee")
+  @@index([contract_id], map: "idx_email_notification_logs_contract")
+  @@index([created_at], map: "idx_email_notification_logs_created_at")
 }

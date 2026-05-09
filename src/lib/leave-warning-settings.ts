@@ -61,5 +61,3 @@ export function getLeaveLowThresholdDays(settings: LeaveWarningSettings, leaveTy
   if (leaveType === "sick") return settings.lowSickLeaveThresholdDays;
   return settings.lowGeneralLeaveThresholdDays;
 }
-
-export type { LeaveWarningSettings };

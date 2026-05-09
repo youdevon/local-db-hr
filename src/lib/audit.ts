@@ -8,6 +8,7 @@ import {
 } from "@/lib/audit-retention";
 import { getRequestMeta } from "@/lib/request-meta";
 import { prisma } from "@/lib/prisma";
+import { getAuditExportSecuritySettings } from "@/lib/security-settings";
 
 export type CreateSystemAuditLogInput = {
   actorUserId?: string | null;
@@ -43,6 +44,12 @@ export async function getAuditRequestContext() {
 
 export async function createLoginAuditLog(input: CreateLoginAuditLogInput): Promise<void> {
   try {
+    const securitySettings = await getAuditExportSecuritySettings();
+    if (input.action === "login" && input.success && !securitySettings.logSuccessfulLogins) return;
+    if (input.action === "failed_login" && !securitySettings.logFailedLogins) return;
+    if (input.action === "logout" && !securitySettings.logLogouts) return;
+    if (input.action === "password_change" && !securitySettings.logPasswordChanges) return;
+
     const settings = await getAuditRetentionSettings();
     const retentionUntil = calculateRetentionUntil(new Date(), settings);
     await prisma.$executeRaw(
@@ -80,6 +87,19 @@ export async function createLoginAuditLog(input: CreateLoginAuditLogInput): Prom
 
 export async function createSystemAuditLog(input: CreateSystemAuditLogInput): Promise<void> {
   try {
+    const securitySettings = await getAuditExportSecuritySettings();
+    const action = input.action.toLowerCase();
+    const moduleName = input.module.toLowerCase();
+    const isRoleChange = action.includes("role");
+    const isEmployeeProfileChange =
+      moduleName.includes("employee") || action.includes("employee") || action.includes("self_service_profile_update");
+    const isReportExport =
+      moduleName.includes("report") && (action.includes("export") || action.includes("print"));
+
+    if (isRoleChange && !securitySettings.logRoleChanges) return;
+    if (isEmployeeProfileChange && !securitySettings.logEmployeeProfileChanges) return;
+    if (isReportExport && !securitySettings.logReportExports) return;
+
     const settings = await getAuditRetentionSettings();
     let actorEmail = input.actorEmail?.trim() || null;
     let actorName = input.actorName?.trim() || null;

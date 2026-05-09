@@ -13,6 +13,7 @@ import {
   VIEW_ONLY_ERROR_VALUE,
 } from "@/lib/roles";
 import { getRetirementAgePolicySettings } from "@/lib/retirement-policy-settings";
+import { getGratuitySettings } from "@/lib/gratuity-settings";
 import { getContractForUiById, getContractsForUi, getEmployeesForUi } from "@/lib/server/hr";
 
 type Props = { params: Promise<{ id: string }> };
@@ -33,6 +34,7 @@ export default async function EditContractPage({ params }: Props) {
   const { id } = await params;
   const session = await getSession();
   const role = normalizeUserRole(session.user?.role);
+  const canDeleteContract = canPerformAction(role, "contracts.delete");
   if (isViewerRole(session.user?.role)) {
     redirect(`/contracts/${id}?${VIEW_ONLY_ERROR_PARAM}=${VIEW_ONLY_ERROR_VALUE}`);
   }
@@ -40,11 +42,12 @@ export default async function EditContractPage({ params }: Props) {
     redirect(redirectTargetForDeniedWriteRoute(role, `/contracts/${id}`));
   }
 
-  const [contract, employees, existingContracts, retirementPolicy] = await Promise.all([
+  const [contract, employees, existingContracts, retirementPolicy, gratuitySettings] = await Promise.all([
     getContractForUiById(id),
     getEmployeesForUi(),
     getContractsForUi(),
     getRetirementAgePolicySettings(),
+    getGratuitySettings(),
   ]);
   if (!contract) notFound();
   return (
@@ -67,7 +70,9 @@ export default async function EditContractPage({ params }: Props) {
         employees={employees}
         existingContracts={existingContracts}
         retirementPolicy={retirementPolicy}
+        gratuitySettings={gratuitySettings}
         initialContract={contract}
+        canDelete={canDeleteContract}
       />
     </div>
   );

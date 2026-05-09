@@ -10,7 +10,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { buttonVariants } from "@/components/ui/button";
 import { getContractDisplayStatus, getContractDisplayStatusTone } from "@/lib/contract-display-status";
 import { calculateDaysToExpiry, formatContractDate, formatCurrencyTTD } from "@/lib/mock/contracts";
-import { calculateGratuity, contractMonthsBetween, defaultGratuitySettings } from "@/lib/gratuity-settings";
+import { calculateGratuity, contractMonthsBetween, getGratuitySettings } from "@/lib/gratuity-settings";
 import { getSession } from "@/lib/get-session";
 import { canPerformAction, normalizeUserRole, VIEW_ONLY_CANNOT_MUTATE_HR_MESSAGE } from "@/lib/roles";
 import { FileText } from "lucide-react";
@@ -67,6 +67,8 @@ export default async function ContractDetailPage({ params }: Props) {
     status: contract.status,
   });
   const statusTone = getContractDisplayStatusTone(displayContractStatus);
+  const isExpiredContract = displayContractStatus === "Expired";
+  const gratuitySettings = await getGratuitySettings();
 
   const daysToExpiry = calculateDaysToExpiry(contract.endDate);
   const daysToExpiryLabel =
@@ -89,8 +91,8 @@ export default async function ContractDetailPage({ params }: Props) {
   const gratuityBreakdown = calculateGratuity({
     monthlySalary: contract.salary,
     contractMonths: durationMonths,
-    gratuityRate: defaultGratuitySettings.gratuityRate,
-    governmentTaxRate: defaultGratuitySettings.governmentTaxRate,
+    gratuityRate: gratuitySettings.gratuityRate,
+    governmentTaxRate: gratuitySettings.governmentTaxRate,
   });
 
   return (
@@ -187,7 +189,7 @@ export default async function ContractDetailPage({ params }: Props) {
             </div>
             <div>
               <dt className="text-muted-foreground">Gratuity rate</dt>
-              <dd className="font-medium">{defaultGratuitySettings.gratuityRate}%</dd>
+              <dd className="font-medium">{gratuitySettings.gratuityRate}%</dd>
             </div>
             <div>
               <dt className="text-muted-foreground">Gross gratuity</dt>
@@ -195,7 +197,7 @@ export default async function ContractDetailPage({ params }: Props) {
             </div>
             <div>
               <dt className="text-muted-foreground">Government tax rate</dt>
-              <dd className="font-medium">{defaultGratuitySettings.governmentTaxRate}%</dd>
+              <dd className="font-medium">{gratuitySettings.governmentTaxRate}%</dd>
             </div>
             <div>
               <dt className="text-muted-foreground">Tax deduction</dt>
@@ -210,6 +212,11 @@ export default async function ContractDetailPage({ params }: Props) {
               <dd className="font-medium">{formatCurrencyTTD(contract.gratuity)}</dd>
             </div>
           </dl>
+          {isExpiredContract ? (
+            <p className="text-muted-foreground mt-3 text-sm">
+              Gratuity retained from expired contract settings.
+            </p>
+          ) : null}
         </SectionCard>
 
         <SectionCard title="Leave Entitlement">

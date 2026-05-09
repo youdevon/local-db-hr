@@ -13,9 +13,11 @@ import {
   DEFAULT_RETIREMENT_AGE_POLICY,
   type RetirementAgePolicy,
 } from "@/lib/retirement-policy";
+import { getRetirementAgePolicySettings } from "@/lib/retirement-policy-settings";
 
 const retirementPolicySchema = z.object({
-  retirementAge: z.number().int().min(18).max(100),
+  retirementAge: z.number().int().min(45).max(75),
+  warningYearsBeforeRetirement: z.number().int().min(0).max(10),
   enforceRetirementCheck: z.boolean(),
   allowOverride: z.boolean(),
   requireOverrideReason: z.boolean(),
@@ -25,7 +27,7 @@ const retirementPolicySchema = z.object({
 
 export type RetirementPolicyFormInput = z.infer<typeof retirementPolicySchema>;
 export type RetirementPolicyResult =
-  | { success: true; message: string }
+  | { success: true; message: string; settings: RetirementAgePolicy }
   | { success: false; message: string };
 
 async function getActor() {
@@ -61,10 +63,16 @@ export async function saveRetirementPolicySettingsAction(
       deviceName: deviceLabel,
       userAgent,
     });
-    return { success: false, message: "Failed to update retirement age policy. Please try again." };
+    return { success: false, message: "Unable to update retirement policy. Please try again." };
   }
 
   try {
+    const previous = await getRetirementAgePolicySettings();
+    const payload: RetirementAgePolicy = {
+      ...parsed.data,
+      updatedAt: new Date().toISOString(),
+      updatedBy: actor.actorUserId,
+    };
     await prisma.$executeRaw(
       Prisma.sql`
         INSERT INTO public.app_settings (
@@ -73,8 +81,8 @@ export async function saveRetirementPolicySettingsAction(
           description
         )
         VALUES (
-          'retirement_age_policy',
-          ${JSON.stringify(parsed.data)}::jsonb,
+          'retirement_policy',
+          ${JSON.stringify(payload)}::jsonb,
           'Retirement age policy used to validate contract periods.'
         )
         ON CONFLICT (setting_key)
@@ -92,6 +100,16 @@ export async function saveRetirementPolicySettingsAction(
       targetType: "settings",
       targetLabel: "Settings: Retirement Age Policy",
       success: true,
+      metadata: {
+        settingChanged: "retirement_policy",
+        settingKey: "retirement_policy",
+        oldRetirementAge: previous.retirementAge,
+        newRetirementAge: parsed.data.retirementAge,
+        oldWarningYearsBeforeRetirement: previous.warningYearsBeforeRetirement,
+        newWarningYearsBeforeRetirement: parsed.data.warningYearsBeforeRetirement,
+        oldPolicy: previous,
+        newPolicy: payload,
+      },
       ipAddress: ip,
       deviceName: deviceLabel,
       userAgent,
@@ -100,7 +118,16 @@ export async function saveRetirementPolicySettingsAction(
     revalidatePath("/settings");
     revalidatePath("/settings/retirement-policy");
     revalidatePath("/");
-    return { success: true, message: "Retirement age policy updated successfully." };
+    revalidatePath("/dashboard");
+    revalidatePath("/employees");
+    revalidatePath("/employees/age-monitoring");
+    revalidatePath("/contracts");
+    revalidatePath("/reports");
+    return {
+      success: true,
+      message: "Retirement policy updated successfully.",
+      settings: payload,
+    };
   } catch {
     await createSystemAuditLog({
       ...actor,
@@ -114,13 +141,11 @@ export async function saveRetirementPolicySettingsAction(
       deviceName: deviceLabel,
       userAgent,
     });
-    return { success: false, message: "Failed to update retirement age policy. Please try again." };
+    return { success: false, message: "Unable to update retirement policy. Please try again." };
   }
 }
 
 export async function resetRetirementPolicySettingsAction(): Promise<RetirementPolicyResult> {
   return saveRetirementPolicySettingsAction(DEFAULT_RETIREMENT_AGE_POLICY);
 }
-
-export type { RetirementAgePolicy };
 

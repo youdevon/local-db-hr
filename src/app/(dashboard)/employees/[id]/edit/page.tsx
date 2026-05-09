@@ -34,6 +34,7 @@ export default async function EditEmployeePage({ params }: Props) {
   const { id } = await params;
   const user = await requireUser();
   const role = normalizeUserRole(user.role);
+  const canDeleteEmployee = canPerformAction(role, "employees.delete");
   if (isViewerRole(user.role)) {
     redirect(`/employees/${id}?${VIEW_ONLY_ERROR_PARAM}=${VIEW_ONLY_ERROR_VALUE}`);
   }
@@ -61,7 +62,13 @@ export default async function EditEmployeePage({ params }: Props) {
         icon="user-round-pen"
         description="Update employee bio-data and identification records."
       />
-      <EmployeeForm mode="edit" employeeId={id} initialValues={initialValues} existingEmployees={existingEmployees} />
+      <EmployeeForm
+        mode="edit"
+        employeeId={id}
+        initialValues={initialValues}
+        existingEmployees={existingEmployees}
+        canDelete={canDeleteEmployee}
+      />
     </div>
   );
 }

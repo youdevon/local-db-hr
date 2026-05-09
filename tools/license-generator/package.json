@@ -1,0 +1,21 @@
+{
+  "name": "@local/db-hr-license-generator",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Provider-only tool: generate and verify D3HR asymmetric licence keys (never ship the signing key to clients).",
+  "scripts": {
+    "generate-keypair": "tsx src/generate-keypair.ts",
+    "generate": "tsx src/generate-license.ts",
+    "verify": "tsx src/verify-license.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "jose": "^5.9.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsx": "^4.19.2",
+    "typescript": "^5"
+  }
+}

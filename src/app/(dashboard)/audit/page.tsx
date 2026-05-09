@@ -45,6 +45,18 @@ function formatActionLabel(value: string | null | undefined): string {
     .trim();
 }
 
+function formatModuleLabel(module: string | null | undefined): string {
+  const m = (module ?? "").trim();
+  if (!m || m === "—") return "—";
+  const key = m.toLowerCase();
+  const map: Record<string, string> = {
+    qualifications: "Qualifications",
+    employee_profile: "Employee Profile",
+    authentication: "Authentication",
+  };
+  return map[key] ?? (m.charAt(0).toUpperCase() + m.slice(1));
+}
+
 function formatSystemActionLabel(value: string | null | undefined): string {
   const normalized = (value ?? "").trim().toLowerCase();
   if (!normalized) return "—";
@@ -92,6 +104,15 @@ function formatSystemActionLabel(value: string | null | undefined): string {
     changed_password: "Changed Password",
     updated_profile: "Updated Profile",
     updated_settings: "Updated Settings",
+    qualification_created: "Qualification Created",
+    qualification_updated: "Qualification Updated",
+    qualification_deleted: "Qualification Deleted",
+    qualification_archived: "Qualification Archived",
+    qualification_batch_created: "Qualification Batch Created",
+    qualification_evidence_attached: "Qualification Evidence Attached",
+    qualification_evidence_removed: "Qualification Evidence Removed",
+    employee_profile_updated: "Employee Profile Updated",
+    self_service_profile_update: "Employee Profile Updated",
   };
   if (known[normalized]) return known[normalized];
   return normalized
@@ -112,6 +133,8 @@ export default async function AuditPage() {
       created_at: Date | null;
       who_attempted_it: string | null;
       action: string | null;
+      action_raw: string | null;
+      audit_summary: string | null;
       target: string | null;
       module: string | null;
       success: boolean;
@@ -128,6 +151,8 @@ export default async function AuditPage() {
           created_at,
           COALESCE(NULLIF(email_attempted, ''), 'Unknown') AS who_attempted_it,
           action,
+          action AS action_raw,
+          ''::text AS audit_summary,
           COALESCE(NULLIF(email_attempted, ''), '—') AS target,
           'Authentication' AS module,
           success,
@@ -143,6 +168,8 @@ export default async function AuditPage() {
           s.created_at,
           COALESCE(NULLIF(s.actor_name, ''), NULLIF(s.actor_email, ''), 'Unknown') AS who_attempted_it,
           s.action,
+          s.action AS action_raw,
+          COALESCE(NULLIF(trim(s.metadata->>'summary'), ''), '') AS audit_summary,
           CASE
             WHEN s.target_type = 'employee' AND e.id IS NOT NULL
               THEN 'Employee: ' || COALESCE(NULLIF(e.first_name, ''), 'Unknown') || ' ' || COALESCE(NULLIF(e.last_name, ''), '')
@@ -200,10 +227,12 @@ export default async function AuditPage() {
       createdAt: formatDateTime(row.created_at),
       createdAtIso: row.created_at ? row.created_at.toISOString() : "",
       whoAttemptedIt: row.who_attempted_it?.trim() || "Unknown",
+      actionRaw: row.action_raw?.trim() || "",
       action:
         row.source_type === "login" ? formatActionLabel(row.action) : formatSystemActionLabel(row.action),
       target: row.target?.trim() || "—",
-      module: row.module?.trim() || "—",
+      summary: row.audit_summary?.trim() || "—",
+      module: formatModuleLabel(row.module),
       success: row.success,
       failureReason: row.failure_reason?.trim() || "—",
       ipAddress: displayAuditIp(row.ip_address),

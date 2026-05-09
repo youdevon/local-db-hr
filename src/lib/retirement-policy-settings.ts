@@ -13,7 +13,8 @@ export async function getRetirementAgePolicySettings(): Promise<RetirementAgePol
     Prisma.sql`
       SELECT setting_value
       FROM public.app_settings
-      WHERE setting_key = 'retirement_age_policy'
+      WHERE setting_key IN ('retirement_policy', 'retirement_age_policy')
+      ORDER BY CASE WHEN setting_key = 'retirement_policy' THEN 0 ELSE 1 END
       LIMIT 1
     `,
   );
@@ -27,6 +28,12 @@ export async function getRetirementAgePolicySettings(): Promise<RetirementAgePol
       Number.isFinite(Number(data.retirementAge)) && Number(data.retirementAge) >= 18 && Number(data.retirementAge) <= 100
         ? Number(data.retirementAge)
         : DEFAULT_RETIREMENT_AGE_POLICY.retirementAge,
+    warningYearsBeforeRetirement:
+      Number.isFinite(Number(data.warningYearsBeforeRetirement)) &&
+      Number(data.warningYearsBeforeRetirement) >= 0 &&
+      Number(data.warningYearsBeforeRetirement) <= 10
+        ? Number(data.warningYearsBeforeRetirement)
+        : DEFAULT_RETIREMENT_AGE_POLICY.warningYearsBeforeRetirement,
     enforceRetirementCheck:
       typeof data.enforceRetirementCheck === "boolean"
         ? data.enforceRetirementCheck
@@ -47,6 +54,17 @@ export async function getRetirementAgePolicySettings(): Promise<RetirementAgePol
       typeof data.defaultStopDayBeforeBirthday === "boolean"
         ? data.defaultStopDayBeforeBirthday
         : DEFAULT_RETIREMENT_AGE_POLICY.defaultStopDayBeforeBirthday,
+    updatedAt: typeof data.updatedAt === "string" ? data.updatedAt : undefined,
+    updatedBy: typeof data.updatedBy === "string" || data.updatedBy == null ? data.updatedBy ?? null : null,
   };
+}
+
+export async function getRetirementPolicy(): Promise<RetirementAgePolicy> {
+  return getRetirementAgePolicySettings();
+}
+
+export async function getRetirementAge(): Promise<number> {
+  const policy = await getRetirementAgePolicySettings();
+  return policy.retirementAge;
 }
 

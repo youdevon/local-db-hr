@@ -12,9 +12,14 @@ COPY . .
 RUN npx prisma generate
 RUN npm run build
 
+
 FROM node:22-alpine AS runner
 WORKDIR /app
+
+RUN apk add --no-cache tzdata
+
 ENV NODE_ENV=production
+ENV TZ=America/Port_of_Spain
 
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/package-lock.json* ./

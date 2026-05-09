@@ -1,3 +1,9 @@
+import { Prisma } from "@prisma/client";
+
+import { prisma } from "@/lib/prisma";
+
+export { calculateGratuity, contractMonthsBetween, resolveGratuityContractMonths } from "@/lib/gratuity-calculation";
+
 export type GratuityCalculationSettings = {
   gratuityRate: number;
   governmentTaxRate: number;
@@ -6,7 +12,7 @@ export type GratuityCalculationSettings = {
   active: boolean;
 };
 
-const STORAGE_KEY = "gratuity_calculation";
+export const GRATUITY_SETTINGS_KEY = "gratuity_calculation" as const;
 
 export const defaultGratuitySettings: GratuityCalculationSettings = {
   gratuityRate: 20,
@@ -16,54 +22,61 @@ export const defaultGratuitySettings: GratuityCalculationSettings = {
   active: true,
 };
 
-export function loadGratuitySettings(): GratuityCalculationSettings {
-  if (typeof window === "undefined") return defaultGratuitySettings;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultGratuitySettings;
-    const parsed = JSON.parse(raw) as Partial<GratuityCalculationSettings>;
-    return {
-      gratuityRate: Number(parsed.gratuityRate ?? defaultGratuitySettings.gratuityRate),
-      governmentTaxRate: Number(parsed.governmentTaxRate ?? defaultGratuitySettings.governmentTaxRate),
-      method: "gross_salary_contract_period_less_tax",
-      effectiveFrom: parsed.effectiveFrom ?? defaultGratuitySettings.effectiveFrom,
-      active: parsed.active ?? true,
-    };
-  } catch {
-    return defaultGratuitySettings;
-  }
+function clampPercent(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  const rounded = Math.round(parsed * 100) / 100;
+  if (rounded < 0) return 0;
+  if (rounded > 100) return 100;
+  return rounded;
 }
 
-export function saveGratuitySettings(settings: GratuityCalculationSettings) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+function normalizeIsoDate(value: unknown, fallback: string): string {
+  if (typeof value !== "string" || !value.trim()) return fallback;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return fallback;
+  return d.toISOString().slice(0, 10);
 }
 
-export function contractMonthsBetween(startDate: string, endDate: string): number {
-  if (!startDate || !endDate) return 0;
-  const start = new Date(`${startDate}T12:00:00`);
-  const end = new Date(`${endDate}T12:00:00`);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return 0;
-  const msDiff = end.getTime() - start.getTime();
-  const days = msDiff / (1000 * 60 * 60 * 24) + 1;
-  const months = days / 30.4375;
-  return Math.round(months * 100) / 100;
+export function normalizeGratuitySettings(raw: Partial<GratuityCalculationSettings> | null | undefined): GratuityCalculationSettings {
+  return {
+    gratuityRate: clampPercent(raw?.gratuityRate, defaultGratuitySettings.gratuityRate),
+    governmentTaxRate: clampPercent(raw?.governmentTaxRate, defaultGratuitySettings.governmentTaxRate),
+    method: "gross_salary_contract_period_less_tax",
+    effectiveFrom: normalizeIsoDate(raw?.effectiveFrom, defaultGratuitySettings.effectiveFrom),
+    active: typeof raw?.active === "boolean" ? raw.active : true,
+  };
 }
 
-export function calculateGratuity({
-  monthlySalary,
-  contractMonths,
-  gratuityRate,
-  governmentTaxRate,
-}: {
-  monthlySalary: number;
-  contractMonths: number;
-  gratuityRate: number;
-  governmentTaxRate: number;
-}) {
-  const grossContractSalary = monthlySalary * contractMonths;
-  const grossGratuity = grossContractSalary * (gratuityRate / 100);
-  const taxDeduction = grossGratuity * (governmentTaxRate / 100);
-  const netGratuity = grossGratuity - taxDeduction;
-  return { grossContractSalary, grossGratuity, taxDeduction, netGratuity };
+export async function getGratuitySettings(): Promise<GratuityCalculationSettings> {
+  const rows = await prisma.$queryRaw<Array<{ setting_value: unknown }>>(Prisma.sql`
+    SELECT setting_value
+    FROM public.app_settings
+    WHERE setting_key = ${GRATUITY_SETTINGS_KEY}
+    LIMIT 1
+  `);
+  const raw = rows[0]?.setting_value;
+  if (!raw || typeof raw !== "object") return defaultGratuitySettings;
+  return normalizeGratuitySettings(raw as Partial<GratuityCalculationSettings>);
 }
+
+export async function saveGratuitySettings(settings: GratuityCalculationSettings): Promise<GratuityCalculationSettings> {
+  const normalized = normalizeGratuitySettings(settings);
+  await prisma.$executeRaw(
+    Prisma.sql`
+      INSERT INTO public.app_settings (setting_key, setting_value, description)
+      VALUES (
+        ${GRATUITY_SETTINGS_KEY},
+        ${JSON.stringify(normalized)}::jsonb,
+        'Global gratuity calculation defaults used for current and future contracts.'
+      )
+      ON CONFLICT (setting_key)
+      DO UPDATE SET
+        setting_value = EXCLUDED.setting_value,
+        description = EXCLUDED.description,
+        updated_at = NOW()
+    `,
+  );
+  return normalized;
+}
+

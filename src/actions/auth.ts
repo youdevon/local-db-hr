@@ -12,7 +12,8 @@ import { createLoginAuditLog, createSystemAuditLog, getAuditRequestContext } fro
 import { clearSessionCookie } from "@/lib/get-session";
 import { normalizeUserRole } from "@/lib/roles";
 import { prisma } from "@/lib/prisma";
-import { sessionOptions, type SessionData } from "@/lib/session";
+import { getLoginNoticeSettings, getLoginProtectionSettings } from "@/lib/security-settings";
+import { DASHBOARD_HREF, sessionOptions, type SessionData } from "@/lib/session";
 
 const GENERIC_LOGIN_ERROR = "Invalid email or password." as const;
 const AUDIT_FAILURE_REASON = "Invalid email or password." as const;
@@ -32,6 +33,14 @@ type AuthenticatedUserRow = {
   email: string;
   is_active: boolean | null;
   is_locked: boolean | null;
+};
+
+type UserLookupRow = {
+  id: string;
+  email: string;
+  is_active: boolean | null;
+  is_locked: boolean | null;
+  failed_login_attempts: number | null;
 };
 
 function loginDebug(message: string, meta?: Record<string, unknown>) {
@@ -68,6 +77,20 @@ async function recordFailedLogin(params: {
   });
 }
 
+async function getLastFailedLoginAt(userId: string): Promise<Date | null> {
+  const rows = await prisma.$queryRaw<Array<{ created_at: Date | null }>>(
+    Prisma.sql`
+      SELECT created_at
+      FROM public.login_audit_logs
+      WHERE user_id = ${userId}::uuid
+        AND action = 'failed_login'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `,
+  );
+  return rows[0]?.created_at ?? null;
+}
+
 export async function loginAction(
   _prev: LoginActionState,
   formData: FormData,
@@ -85,10 +108,63 @@ export async function loginAction(
   const password = parsed.data.password;
   const { ip, userAgent, deviceLabel } = await getAuditRequestContext();
   const normalizedEmail = email.toLowerCase();
+  const [loginProtectionSettings, loginNoticeSettings] = await Promise.all([
+    getLoginProtectionSettings(),
+    getLoginNoticeSettings(),
+  ]);
+
+  if (loginNoticeSettings.enabled && loginNoticeSettings.requireAcknowledgement) {
+    const acknowledged = formData.get("acknowledgeLoginNotice");
+    if (acknowledged !== "on") {
+      return { error: "You must acknowledge the security notice before signing in." };
+    }
+  }
 
   loginDebug("attempt", { normalizedEmail });
 
   try {
+    // Clear potentially stale/expired cookie before creating a fresh authenticated session.
+    await clearSessionCookie();
+
+    const usersByEmail = await prisma.$queryRaw<UserLookupRow[]>(
+      Prisma.sql`
+        SELECT u.id::text AS id,
+               u.email::text AS email,
+               u.is_active AS is_active,
+               u.is_locked AS is_locked,
+               u.failed_login_attempts AS failed_login_attempts
+        FROM public.users u
+        WHERE lower(u.email) = lower(${email}::text)
+        LIMIT 1
+      `,
+    );
+    const userByEmail = usersByEmail[0];
+
+    if (
+      userByEmail?.is_locked &&
+      loginProtectionSettings.enableLockout
+    ) {
+      const lastFailedAt = await getLastFailedLoginAt(userByEmail.id);
+      if (lastFailedAt) {
+        const elapsedMs = Date.now() - lastFailedAt.getTime();
+        if (elapsedMs >= loginProtectionSettings.lockoutMinutes * 60 * 1000) {
+          await prisma.user.update({
+            where: { id: userByEmail.id },
+            data: { is_locked: false, failed_login_attempts: 0 },
+          });
+        } else {
+          await recordFailedLogin({
+            emailAttempted: normalizedEmail,
+            userId: userByEmail.id,
+            ip,
+            userAgent,
+            deviceLabel,
+          });
+          return { error: GENERIC_LOGIN_ERROR };
+        }
+      }
+    }
+
     const result = await prisma.$queryRaw<AuthenticatedUserRow[]>(
       Prisma.sql`
         SELECT u.id::text AS id,
@@ -105,15 +181,7 @@ export async function loginAction(
     const row = result[0];
 
     if (!row) {
-      const byEmail = await prisma.$queryRaw<Array<{ id: string }>>(
-        Prisma.sql`
-          SELECT u.id::text AS id
-          FROM public.users u
-          WHERE lower(u.email) = lower(${email}::text)
-          LIMIT 1
-        `,
-      );
-      const existing = byEmail[0];
+      const existing = userByEmail;
       loginDebug("crypt mismatch or unknown user", {
         normalizedEmail,
         userRowFound: Boolean(existing),
@@ -126,6 +194,18 @@ export async function loginAction(
         userAgent,
         deviceLabel,
       });
+
+      if (existing?.id && loginProtectionSettings.enableLockout) {
+        const nextAttempts = (existing.failed_login_attempts ?? 0) + 1;
+        const shouldLock = nextAttempts >= loginProtectionSettings.maxFailedAttempts;
+        await prisma.user.update({
+          where: { id: existing.id },
+          data: {
+            failed_login_attempts: nextAttempts,
+            is_locked: shouldLock,
+          },
+        });
+      }
       return { error: GENERIC_LOGIN_ERROR };
     }
 
@@ -185,7 +265,9 @@ export async function loginAction(
         last_login_at: new Date(),
         last_login_ip: ip,
         last_login_device: deviceLabel ?? userAgent,
-        failed_login_attempts: 0,
+        ...(loginProtectionSettings.resetOnSuccessfulLogin
+          ? { failed_login_attempts: 0, is_locked: false }
+          : {}),
       },
     });
 
@@ -215,12 +297,17 @@ export async function loginAction(
       role: userRole,
       department: user.profile?.department ?? null,
     };
+    const now = Date.now();
+    session.createdAt = now;
+    session.lastActivityAt = now;
     await session.save();
+    loginDebug("session saved", {
+      userId: user.id,
+      role: userRole,
+      cookieName: sessionOptions.cookieName,
+    });
 
-    if (userRole === "member") {
-      redirect("/profile");
-    }
-    redirect("/");
+    redirect(DASHBOARD_HREF);
   } catch (err) {
     if (isNextRedirectError(err)) throw err;
     loginDebug("error", { normalizedEmail, message: err instanceof Error ? err.message : String(err) });
@@ -336,6 +423,7 @@ export async function logoutWithoutRedirectAction(
   } finally {
     session.destroy();
     await session.save();
+    await clearSessionCookie().catch(() => undefined);
   }
 
   return { success: true };

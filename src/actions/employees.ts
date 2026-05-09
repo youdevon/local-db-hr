@@ -6,6 +6,8 @@ import { revalidatePath } from "next/cache";
 import { assertViewerCannotMutateOrThrow, getSessionUserId, requirePermission } from "@/lib/auth-server";
 import { MUTATION_NOT_PERMITTED_MESSAGE } from "@/lib/roles";
 import { createSystemAuditLog, getAuditRequestContext } from "@/lib/audit";
+import { sendHrNotification } from "@/lib/email/hr-notifications";
+import { buildEmployeeProfileUpdatedTemplate, buildSimpleHrTemplate } from "@/lib/email/templates";
 import { prisma } from "@/lib/prisma";
 import { employeeFormSchema, type EmployeeFormValues } from "@/lib/validators/employee-form";
 
@@ -17,6 +19,20 @@ export type CreateEmployeeResult =
 
 export type UpdateEmployeeResult =
   | { success: true; message: "Employee updated successfully." }
+  | { success: false; message: string };
+
+export type DeleteEmployeeMode = "employee_only" | "employee_and_contracts";
+
+export type DeleteEmployeeResult =
+  | { success: true; message: "Employee deleted successfully." }
+  | { success: false; message: string };
+
+export type ArchiveEmployeeResult =
+  | { success: true; message: "Employee archived successfully." }
+  | { success: false; message: string };
+
+export type RestoreEmployeeResult =
+  | { success: true; message: "Employee restored successfully." }
   | { success: false; message: string };
 
 function hasAnyValue(values: Array<string | undefined>): boolean {
@@ -245,6 +261,24 @@ export async function createEmployeeAction(input: unknown): Promise<CreateEmploy
       deviceName: deviceLabel,
       userAgent,
     });
+    await sendHrNotification({
+      notificationType: "employee_profile_created",
+      settingKey: "sendEmployeeProfileCreatedAlerts",
+      employeeId,
+      subject: "Employee Profile Created",
+      text: buildSimpleHrTemplate({
+        greetingName: `${data.firstName.trim()} ${data.lastName.trim()}`.trim(),
+        lines: [
+          "A new employee profile has been recorded in Local DB HR.",
+          `Employee: ${data.firstName.trim()} ${data.lastName.trim()}`.trim(),
+          `File number: ${data.fileNumber.trim()}`,
+        ],
+      }),
+      metadata: {
+        employeeId,
+        fileNumber: data.fileNumber.trim(),
+      },
+    });
     return { success: true, message: "Employee created successfully.", employeeId };
   } catch (error) {
     let failureMessage = "Failed to create employee. Please try again.";
@@ -252,7 +286,7 @@ export async function createEmployeeAction(input: unknown): Promise<CreateEmploy
       const target = Array.isArray(error.meta?.target) ? error.meta?.target.join(",") : String(error.meta?.target ?? "");
       const normalized = target.toLowerCase();
       if (normalized.includes("file_number")) {
-        failureMessage = "File number already exists. Please use a unique file number.";
+        failureMessage = "File number already exists.";
       } else if (normalized.includes("identification") || normalized.includes("id_number") || normalized.includes("normalized_id_number")) {
         failureMessage = "Identification number already exists. Please check the ID details.";
       } else {
@@ -309,11 +343,35 @@ export async function updateEmployeeAction(employeeId: string, input: unknown): 
 
   const existing = await prisma.employees.findUnique({
     where: { id: employeeId },
-    select: { id: true },
+    select: {
+      id: true,
+      first_name: true,
+      last_name: true,
+      file_number: true,
+      preferred_name: true,
+      work_email: true,
+      personal_email: true,
+      mobile_number: true,
+      home_number: true,
+      department: true,
+      position: true,
+      employment_status: true,
+    },
   });
   if (!existing) {
     return { success: false, message: "Employee not found." };
   }
+  const changedFields: string[] = [];
+  if ((existing.first_name ?? "") !== data.firstName.trim()) changedFields.push("first name");
+  if ((existing.last_name ?? "") !== data.lastName.trim()) changedFields.push("last name");
+  if ((existing.preferred_name ?? "") !== (data.preferredName?.trim() || "")) changedFields.push("preferred name");
+  if ((existing.work_email ?? "") !== (data.workEmail?.trim() || "")) changedFields.push("work email");
+  if ((existing.personal_email ?? "") !== (data.personalEmail?.trim() || "")) changedFields.push("personal email");
+  if ((existing.mobile_number ?? "") !== (data.mobileNumber?.trim() || "")) changedFields.push("mobile number");
+  if ((existing.home_number ?? "") !== (data.homeNumber?.trim() || "")) changedFields.push("home number");
+  if ((existing.department ?? "") !== (data.department?.trim() || "")) changedFields.push("department");
+  if ((existing.position ?? "") !== (data.position?.trim() || "")) changedFields.push("position");
+  if ((existing.employment_status ?? "") !== (data.employmentStatus?.trim() || "")) changedFields.push("employment status");
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -358,6 +416,20 @@ export async function updateEmployeeAction(employeeId: string, input: unknown): 
       deviceName: deviceLabel,
       userAgent,
     });
+    await sendHrNotification({
+      notificationType: "employee_profile_updated",
+      settingKey: "sendEmployeeProfileUpdatedAlerts",
+      employeeId,
+      ...buildEmployeeProfileUpdatedTemplate({
+        employeeName: `${data.firstName.trim()} ${data.lastName.trim()}`.trim(),
+        changedFields,
+      }),
+      metadata: {
+        employeeId,
+        employeeName: `${data.firstName.trim()} ${data.lastName.trim()}`.trim(),
+        changedFields,
+      },
+    });
     return { success: true, message: "Employee updated successfully." };
   } catch (error) {
     let failureMessage = "Failed to update employee. Please try again.";
@@ -365,7 +437,7 @@ export async function updateEmployeeAction(employeeId: string, input: unknown): 
       const target = Array.isArray(error.meta?.target) ? error.meta?.target.join(",") : String(error.meta?.target ?? "");
       const normalized = target.toLowerCase();
       if (normalized.includes("file_number")) {
-        failureMessage = "File number already exists. Please use a unique file number.";
+        failureMessage = "File number already exists.";
       } else if (normalized.includes("identification") || normalized.includes("id_number") || normalized.includes("normalized_id_number")) {
         failureMessage = "Identification number already exists. Please check the ID details.";
       } else {
@@ -389,5 +461,248 @@ export async function updateEmployeeAction(employeeId: string, input: unknown): 
       console.error("[employees:update] failed", error);
     }
     return { success: false, message: failureMessage };
+  }
+}
+
+export async function deleteEmployeeAction(
+  employeeId: string,
+  mode: DeleteEmployeeMode,
+): Promise<DeleteEmployeeResult> {
+  await assertViewerCannotMutateOrThrow();
+  const access = await requirePermission("employees.delete");
+  if (!access) {
+    return { success: false, message: MUTATION_NOT_PERMITTED_MESSAGE };
+  }
+
+  const actorUserId = await getSessionUserId();
+  const { ip, userAgent, deviceLabel } = await getAuditRequestContext();
+  const action = mode === "employee_and_contracts" ? "deleted_employee_with_contracts" : "deleted_employee";
+
+  try {
+    const employee = await prisma.employees.findUnique({
+      where: { id: employeeId },
+      select: {
+        id: true,
+        file_number: true,
+        first_name: true,
+        last_name: true,
+        contracts: { select: { id: true } },
+      },
+    });
+    if (!employee) {
+      return { success: false, message: "Employee not found." };
+    }
+
+    const targetLabel = `Employee: ${employee.first_name} ${employee.last_name} (${employee.file_number})`;
+
+    if (mode === "employee_only" && employee.contracts.length > 0) {
+      const failureMessage =
+        "This employee has contract records and cannot be deleted alone. Use Delete Employee and Contracts instead.";
+      await createSystemAuditLog({
+        actorUserId,
+        module: "Employees",
+        action,
+        targetType: "employee",
+        targetId: employeeId,
+        targetLabel,
+        success: false,
+        failureReason: failureMessage,
+        ipAddress: ip,
+        deviceName: deviceLabel,
+        userAgent,
+      });
+      return { success: false, message: failureMessage };
+    }
+
+    const deletedCounts = await prisma.$transaction(async (tx) => {
+      const contractIds = employee.contracts.map((contract) => contract.id);
+
+      const detachedProfiles = await tx.userProfile.updateMany({
+        where: { employee_id: employeeId },
+        data: { employee_id: null },
+      });
+
+      const deletedLeaveTransactions = await tx.leave_transactions.deleteMany({
+        where:
+          mode === "employee_and_contracts"
+            ? {
+                OR: [
+                  { employee_id: employeeId },
+                  ...(contractIds.length > 0 ? [{ contract_id: { in: contractIds } }] : []),
+                ],
+              }
+            : { employee_id: employeeId },
+      });
+
+      const deletedLeaveYearBalances = await tx.leave_year_balances.deleteMany({
+        where:
+          mode === "employee_and_contracts"
+            ? {
+                OR: [
+                  { employee_id: employeeId },
+                  ...(contractIds.length > 0 ? [{ contract_id: { in: contractIds } }] : []),
+                ],
+              }
+            : { employee_id: employeeId },
+      });
+
+      let deletedContractAllowances = { count: 0 };
+      let deletedContracts = { count: 0 };
+
+      if (mode === "employee_and_contracts" && contractIds.length > 0) {
+        deletedContractAllowances = await tx.contract_allowances.deleteMany({
+          where: { contract_id: { in: contractIds } },
+        });
+        deletedContracts = await tx.contracts.deleteMany({
+          where: { employee_id: employeeId },
+        });
+      }
+
+      await tx.employees.delete({
+        where: { id: employeeId },
+      });
+
+      return {
+        detachedProfiles: detachedProfiles.count,
+        leaveTransactions: deletedLeaveTransactions.count,
+        leaveYearBalances: deletedLeaveYearBalances.count,
+        contractAllowances: deletedContractAllowances.count,
+        contracts: deletedContracts.count,
+      };
+    });
+
+    revalidatePath("/employees");
+    revalidatePath("/employees/directory");
+    revalidatePath("/employees/age-monitoring");
+    revalidatePath("/contracts");
+    revalidatePath("/contracts/directory");
+    revalidatePath("/");
+
+    await createSystemAuditLog({
+      actorUserId,
+      module: "Employees",
+      action,
+      targetType: "employee",
+      targetId: employeeId,
+      targetLabel,
+      success: true,
+      metadata: {
+        deleteMode: mode,
+        ...deletedCounts,
+      },
+      ipAddress: ip,
+      deviceName: deviceLabel,
+      userAgent,
+    });
+
+    return { success: true, message: "Employee deleted successfully." };
+  } catch (error) {
+    const failureMessage = "Failed to delete employee. Please try again.";
+    await createSystemAuditLog({
+      actorUserId,
+      module: "Employees",
+      action,
+      targetType: "employee",
+      targetId: employeeId,
+      success: false,
+      failureReason: failureMessage,
+      ipAddress: ip,
+      deviceName: deviceLabel,
+      userAgent,
+    });
+    console.error("[employees:delete] failed", error);
+    return { success: false, message: failureMessage };
+  }
+}
+
+export async function archiveEmployeeAction(employeeId: string): Promise<ArchiveEmployeeResult> {
+  await assertViewerCannotMutateOrThrow();
+  const access = await requirePermission("employees.edit");
+  if (!access) return { success: false, message: MUTATION_NOT_PERMITTED_MESSAGE };
+  const actorUserId = await getSessionUserId();
+  const { ip, userAgent, deviceLabel } = await getAuditRequestContext();
+  try {
+    const employee = await prisma.employees.update({
+      where: { id: employeeId },
+      data: { employment_status: "inactive", updated_at: new Date() },
+      select: { id: true, first_name: true, last_name: true, file_number: true },
+    });
+    const targetLabel = `Employee: ${employee.first_name} ${employee.last_name} (${employee.file_number})`;
+    await createSystemAuditLog({
+      actorUserId,
+      module: "Employees",
+      action: "archived_employee",
+      targetType: "employee",
+      targetId: employeeId,
+      targetLabel,
+      success: true,
+      ipAddress: ip,
+      deviceName: deviceLabel,
+      userAgent,
+    });
+    await sendHrNotification({
+      notificationType: "employee_profile_archived",
+      settingKey: "sendEmployeeProfileUpdatedAlerts",
+      employeeId: employee.id,
+      subject: "Employee Profile Archived",
+      text: buildSimpleHrTemplate({
+        greetingName: `${employee.first_name} ${employee.last_name}`.trim(),
+        lines: ["Your employee profile was archived and marked inactive in Local DB HR."],
+      }),
+      metadata: { employeeId: employee.id, fileNumber: employee.file_number },
+    });
+    revalidatePath("/employees");
+    revalidatePath(`/employees/${employee.id}`);
+    revalidatePath("/");
+    return { success: true, message: "Employee archived successfully." };
+  } catch (error) {
+    console.error("[employees:archive] failed", error);
+    return { success: false, message: "Failed to archive employee. Please try again." };
+  }
+}
+
+export async function restoreEmployeeAction(employeeId: string): Promise<RestoreEmployeeResult> {
+  await assertViewerCannotMutateOrThrow();
+  const access = await requirePermission("employees.edit");
+  if (!access) return { success: false, message: MUTATION_NOT_PERMITTED_MESSAGE };
+  const actorUserId = await getSessionUserId();
+  const { ip, userAgent, deviceLabel } = await getAuditRequestContext();
+  try {
+    const employee = await prisma.employees.update({
+      where: { id: employeeId },
+      data: { employment_status: "active", updated_at: new Date() },
+      select: { id: true, first_name: true, last_name: true, file_number: true },
+    });
+    const targetLabel = `Employee: ${employee.first_name} ${employee.last_name} (${employee.file_number})`;
+    await createSystemAuditLog({
+      actorUserId,
+      module: "Employees",
+      action: "restored_employee",
+      targetType: "employee",
+      targetId: employeeId,
+      targetLabel,
+      success: true,
+      ipAddress: ip,
+      deviceName: deviceLabel,
+      userAgent,
+    });
+    await sendHrNotification({
+      notificationType: "employee_profile_restored",
+      settingKey: "sendEmployeeProfileUpdatedAlerts",
+      employeeId: employee.id,
+      subject: "Employee Profile Restored",
+      text: buildSimpleHrTemplate({
+        greetingName: `${employee.first_name} ${employee.last_name}`.trim(),
+        lines: ["Your employee profile was restored and marked active in Local DB HR."],
+      }),
+      metadata: { employeeId: employee.id, fileNumber: employee.file_number },
+    });
+    revalidatePath("/employees");
+    revalidatePath(`/employees/${employee.id}`);
+    revalidatePath("/");
+    return { success: true, message: "Employee restored successfully." };
+  } catch (error) {
+    console.error("[employees:restore] failed", error);
+    return { success: false, message: "Failed to restore employee. Please try again." };
   }
 }

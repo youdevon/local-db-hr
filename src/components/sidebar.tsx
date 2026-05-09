@@ -5,15 +5,22 @@ import { usePathname } from "next/navigation";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { NavDatabaseIcon } from "@/components/nav-database-icon";
 import { SidebarFooter } from "@/components/sidebar-footer";
+import type { SidebarLicenseIndicator } from "@/components/sidebar-footer-tray";
 import { Button } from "@/components/ui/button";
-import { brandIcon, getSidebarNavForRole } from "@/config/navigation";
+import { getSidebarNavForRole } from "@/config/navigation";
 import { cn } from "@/lib/utils";
 
-const BrandIcon = brandIcon;
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "local-db-hr-sidebar-collapsed";
 
-export function Sidebar({ role }: { role: string }) {
+export function Sidebar({
+  role,
+  licenseIndicator = null,
+}: {
+  role: string;
+  licenseIndicator?: SidebarLicenseIndicator | null;
+}) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const navItems = getSidebarNavForRole(role);
@@ -46,15 +53,7 @@ export function Sidebar({ role }: { role: string }) {
           collapsed ? "justify-between px-2" : "gap-2 px-4",
         )}
       >
-        <div className="bg-primary/10 text-primary inline-flex size-9 items-center justify-center rounded-md">
-          <BrandIcon className="size-5" />
-        </div>
-        {!collapsed ? (
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold tracking-tight">Local DB HR</p>
-            <p className="text-muted-foreground truncate text-xs">Internal</p>
-          </div>
-        ) : null}
+        <NavDatabaseIcon className={collapsed ? "" : "shrink-0"} />
         <Button
           type="button"
           variant="ghost"
@@ -99,7 +98,7 @@ export function Sidebar({ role }: { role: string }) {
           );
         })}
       </nav>
-      <SidebarFooter collapsed={collapsed} />
+      <SidebarFooter collapsed={collapsed} licenseIndicator={licenseIndicator} />
     </aside>
   );
 }

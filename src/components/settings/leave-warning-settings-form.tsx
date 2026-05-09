@@ -1,21 +1,23 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   resetLeaveWarningSettingsAction,
   saveLeaveWarningSettingsAction,
-  type LeaveWarningSettings,
 } from "@/actions/leave-warning-settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { type LeaveWarningSettings } from "@/lib/leave-warning-defaults";
 import { notifyError, notifySuccess } from "@/lib/notify";
 
 const cardClass =
   "rounded-xl border border-border bg-card p-5 shadow-[0_6px_18px_rgba(15,23,42,0.08)] dark:shadow-[0_6px_18px_rgba(0,0,0,0.35)]";
 
 export function LeaveWarningSettingsForm({ initialSettings }: { initialSettings: LeaveWarningSettings }) {
+  const router = useRouter();
   const [settings, setSettings] = useState<LeaveWarningSettings>(initialSettings);
   const [saving, setSaving] = useState(false);
 
@@ -24,17 +26,25 @@ export function LeaveWarningSettingsForm({ initialSettings }: { initialSettings:
   }
 
   async function save() {
+    if (saving) return;
     setSaving(true);
     try {
       const result = await saveLeaveWarningSettingsAction(settings);
-      if (result.success) notifySuccess("Leave warning settings updated successfully.");
-      else notifyError("Failed to update leave warning settings. Please try again.");
+      if (result.success) {
+        notifySuccess("Leave warning settings updated successfully.");
+        router.refresh();
+      } else {
+        notifyError("Unable to update leave warning settings. Please try again.");
+      }
+    } catch {
+      notifyError("Unable to update leave warning settings. Please try again.");
     } finally {
       setSaving(false);
     }
   }
 
   async function resetDefaults() {
+    if (saving) return;
     setSaving(true);
     try {
       const result = await resetLeaveWarningSettingsAction();
@@ -47,9 +57,12 @@ export function LeaveWarningSettingsForm({ initialSettings }: { initialSettings:
           showLowLeaveBadge: true,
         });
         notifySuccess("Leave warning settings reset to default.");
+        router.refresh();
       } else {
-        notifyError("Failed to update leave warning settings. Please try again.");
+        notifyError("Unable to update leave warning settings. Please try again.");
       }
+    } catch {
+      notifyError("Unable to update leave warning settings. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -57,7 +70,13 @@ export function LeaveWarningSettingsForm({ initialSettings }: { initialSettings:
 
   return (
     <section className={cardClass}>
-      <div className="grid gap-4 md:grid-cols-2">
+      <form
+        className="grid gap-4 md:grid-cols-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void save();
+        }}
+      >
         <div className="space-y-2">
           <Label className="text-sm font-medium">Low vacation leave threshold (days)</Label>
           <Input
@@ -106,10 +125,9 @@ export function LeaveWarningSettingsForm({ initialSettings }: { initialSettings:
           />
           Show low leave badge
         </label>
-      </div>
-      <div className="mt-5 flex flex-wrap gap-2">
-        <Button type="button" className="h-10 rounded-md text-sm font-medium" onClick={save} disabled={saving}>
-          Save Settings
+        <div className="mt-5 flex flex-wrap gap-2 md:col-span-2">
+        <Button type="submit" className="h-10 rounded-md text-sm font-medium" disabled={saving}>
+          {saving ? "Saving..." : "Save Settings"}
         </Button>
         <Button
           type="button"
@@ -120,7 +138,8 @@ export function LeaveWarningSettingsForm({ initialSettings }: { initialSettings:
         >
           Reset to Default
         </Button>
-      </div>
+        </div>
+      </form>
     </section>
   );
 }

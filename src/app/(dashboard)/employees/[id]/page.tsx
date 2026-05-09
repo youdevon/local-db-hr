@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { EmployeeDetailTabs } from "@/components/employees/employee-detail-tabs";
+import { EmployeeQualificationsSection } from "@/components/employees/employee-qualifications-section";
 import { ViewOnlyErrorToast } from "@/components/employees/view-only-error-toast";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -198,7 +199,9 @@ export default async function EmployeeDetailPage({ params, searchParams }: Props
         </div>
         <div className="min-w-0 flex-1 space-y-4 text-center sm:text-left">
           <div>
-            <h2 className="text-foreground text-xl font-semibold tracking-tight">{displayName}</h2>
+            <h2 className="font-heading text-foreground text-xl font-bold tracking-tight">
+              {displayName}
+            </h2>
             <p className="text-muted-foreground mt-1 text-sm">File #{employee.fileNumber || "—"}</p>
           </div>
           <dl className="grid gap-3 sm:grid-cols-3">
@@ -220,7 +223,13 @@ export default async function EmployeeDetailPage({ params, searchParams }: Props
         </div>
       </section>
 
-      <EmployeeDetailTabs employee={employee} allowMutations={canMutateEmployeeData} />
+      <EmployeeDetailTabs
+        employee={employee}
+        allowMutations={canMutateEmployeeData}
+        qualificationsContent={
+          <EmployeeQualificationsSection employeeId={employee.id} allowEdit={canMutateEmployeeData} />
+        }
+      />
     </div>
   );
 }

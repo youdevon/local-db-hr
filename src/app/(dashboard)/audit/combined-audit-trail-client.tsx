@@ -21,8 +21,11 @@ export type CombinedAuditRow = {
   createdAtIso: string;
   auditType: "Login" | "System";
   whoAttemptedIt: string;
+  /** Raw action key from DB (login or system) */
+  actionRaw: string;
   action: string;
   target: string;
+  summary: string;
   module: string;
   success: boolean;
   failureReason: string;
@@ -34,6 +37,7 @@ type AuditFilters = {
   search: string;
   auditType: "all" | "login" | "system";
   module: string;
+  auditAction: string;
   success: "all" | "success" | "failed";
   dateFrom: string;
   dateTo: string;
@@ -43,12 +47,13 @@ const defaultFilters: AuditFilters = {
   search: "",
   auditType: "all",
   module: "all",
+  auditAction: "all",
   success: "all",
   dateFrom: "",
   dateTo: "",
 };
 
-const AUDIT_TABLE_MIN_WIDTH = 1930;
+const AUDIT_TABLE_MIN_WIDTH = 2280;
 
 function toDateOnly(value: string): string {
   if (!value) return "";
@@ -61,6 +66,7 @@ type CombinedSortKey =
   | "whoAttemptedIt"
   | "action"
   | "target"
+  | "summary"
   | "module"
   | "success"
   | "failureReason"
@@ -85,7 +91,9 @@ function matchesSearch(row: CombinedAuditRow, needle: string): boolean {
   return [
     row.whoAttemptedIt,
     row.action,
+    row.actionRaw,
     row.target,
+    row.summary,
     row.module,
     row.failureReason,
     row.ipAddress,
@@ -113,12 +121,22 @@ export function CombinedAuditTrailClient({ rows }: { rows: CombinedAuditRow[] })
     return ["all", ...Array.from(values).sort((a, b) => a.localeCompare(b))];
   }, [rows]);
 
+  const actionOptions = useMemo(() => {
+    const values = new Set<string>();
+    rows.forEach((row) => {
+      const raw = row.actionRaw?.trim();
+      if (raw) values.add(raw);
+    });
+    return ["all", ...Array.from(values).sort((a, b) => a.localeCompare(b))];
+  }, [rows]);
+
   const filteredRows = useMemo(
     () =>
       rows.filter((row) => {
         if (!matchesSearch(row, filters.search)) return false;
         if (filters.auditType !== "all" && row.sourceType !== filters.auditType) return false;
         if (filters.module !== "all" && row.module !== filters.module) return false;
+        if (filters.auditAction !== "all" && row.actionRaw !== filters.auditAction) return false;
         if (filters.success === "success" && !row.success) return false;
         if (filters.success === "failed" && row.success) return false;
 
@@ -192,6 +210,7 @@ export function CombinedAuditTrailClient({ rows }: { rows: CombinedAuditRow[] })
           "Who Attempted It": row.whoAttemptedIt || "Unknown",
           Action: row.action || "—",
           Target: row.target || "—",
+          Summary: row.summary || "—",
           Module: row.module || "—",
           Success: row.success ? "Success" : "Failed",
           "Failure Reason": row.failureReason || "—",
@@ -244,10 +263,10 @@ export function CombinedAuditTrailClient({ rows }: { rows: CombinedAuditRow[] })
         </Button>
       }
     >
-      <div className="mb-6 grid gap-4 lg:grid-cols-6">
+      <div className="mb-6 grid gap-4 lg:grid-cols-7">
         <Input
           className="h-10 rounded-md lg:col-span-2"
-          placeholder="Search who, action, target, module, failure reason, IP, device"
+          placeholder="Search who, action, target, summary, module, failure reason, IP, device"
           value={filters.search}
           onChange={(e) => update("search", e.target.value)}
         />
@@ -268,6 +287,18 @@ export function CombinedAuditTrailClient({ rows }: { rows: CombinedAuditRow[] })
           {moduleOptions.map((module) => (
             <option key={module} value={module}>
               {module === "all" ? "All Modules" : module}
+            </option>
+          ))}
+        </select>
+        <select
+          className="h-10 min-w-[11rem] rounded-md border border-input bg-background px-3 text-sm"
+          value={filters.auditAction}
+          onChange={(e) => update("auditAction", e.target.value)}
+          aria-label="Filter by action"
+        >
+          {actionOptions.map((act) => (
+            <option key={act} value={act}>
+              {act === "all" ? "All Actions" : act.replace(/_/g, " ")}
             </option>
           ))}
         </select>
@@ -412,6 +443,22 @@ export function CombinedAuditTrailClient({ rows }: { rows: CombinedAuditRow[] })
                     </button>
                   </th>
                   <th
+                    className="h-11 min-w-[280px] px-4 text-left align-middle whitespace-nowrap"
+                    aria-sort={auditAriaSort("summary")}
+                  >
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:text-foreground inline-flex h-8 max-w-full cursor-pointer items-center gap-1 rounded-md px-1 text-left text-xs font-medium transition-colors"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        cycleSort("summary");
+                      }}
+                    >
+                      Summary
+                      {auditSortIcon("summary")}
+                    </button>
+                  </th>
+                  <th
                     className="h-11 w-[160px] min-w-[160px] px-4 text-left align-middle whitespace-nowrap"
                     aria-sort={auditAriaSort("module")}
                   >
@@ -517,6 +564,12 @@ export function CombinedAuditTrailClient({ rows }: { rows: CombinedAuditRow[] })
                     <td className="w-[190px] min-w-[190px] px-4 py-3 align-middle whitespace-nowrap">{row.action}</td>
                     <td className="w-[260px] min-w-[260px] max-w-[260px] truncate px-4 py-3 align-middle" title={row.target}>
                       {row.target}
+                    </td>
+                    <td
+                      className="min-w-[280px] max-w-[420px] truncate px-4 py-3 align-middle text-sm"
+                      title={row.summary}
+                    >
+                      {row.summary}
                     </td>
                     <td className="w-[160px] min-w-[160px] px-4 py-3 align-middle whitespace-nowrap">{row.module}</td>
                     <td className="w-[120px] min-w-[120px] px-4 py-3 align-middle whitespace-nowrap">

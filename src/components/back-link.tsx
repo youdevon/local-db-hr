@@ -6,16 +6,22 @@ import { cn } from "@/lib/utils";
 
 type BackLinkProps = {
   fallbackHref?: string;
+  /** When set, navigate here instead of browser history (deterministic back target). */
+  navigateHref?: string;
   className?: string;
 };
 
 const btnClass =
   "text-muted-foreground hover:text-primary inline-flex items-center gap-1 rounded-md text-sm font-medium transition-colors focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus:outline-none";
 
-export function BackLink({ fallbackHref = "/", className }: BackLinkProps) {
+export function BackLink({ fallbackHref = "/", navigateHref, className }: BackLinkProps) {
   const router = useRouter();
 
   function handleBack() {
+    if (navigateHref) {
+      router.push(navigateHref);
+      return;
+    }
     if (typeof window !== "undefined" && window.history.length > 1) {
       router.back();
       return;

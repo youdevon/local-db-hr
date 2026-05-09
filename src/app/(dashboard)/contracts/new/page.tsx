@@ -13,6 +13,7 @@ import {
   VIEW_ONLY_ERROR_VALUE,
 } from "@/lib/roles";
 import { getRetirementAgePolicySettings } from "@/lib/retirement-policy-settings";
+import { getGratuitySettings } from "@/lib/gratuity-settings";
 import { getContractsForUi, getEmployeesForUi } from "@/lib/server/hr";
 
 export const metadata: Metadata = {
@@ -29,10 +30,11 @@ export default async function NewContractPage() {
     redirect(redirectTargetForDeniedWriteRoute(role, "/contracts"));
   }
 
-  const [employees, existingContracts, retirementPolicy] = await Promise.all([
+  const [employees, existingContracts, retirementPolicy, gratuitySettings] = await Promise.all([
     getEmployeesForUi(),
     getContractsForUi(),
     getRetirementAgePolicySettings(),
+    getGratuitySettings(),
   ]);
   return (
     <div className="space-y-6">
@@ -52,6 +54,7 @@ export default async function NewContractPage() {
         employees={employees}
         existingContracts={existingContracts}
         retirementPolicy={retirementPolicy}
+        gratuitySettings={gratuitySettings}
       />
     </div>
   );

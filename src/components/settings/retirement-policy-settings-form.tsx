@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   resetRetirementPolicySettingsAction,
@@ -11,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { notifyError, notifySuccess } from "@/lib/notify";
+import { DEFAULT_RETIREMENT_AGE_POLICY } from "@/lib/retirement-policy";
 
 const cardClass =
   "rounded-xl border border-border bg-card p-5 shadow-[0_6px_18px_rgba(15,23,42,0.08)] dark:shadow-[0_6px_18px_rgba(0,0,0,0.35)]";
@@ -20,6 +22,7 @@ export function RetirementPolicySettingsForm({
 }: {
   initialSettings: RetirementPolicyFormInput;
 }) {
+  const router = useRouter();
   const [settings, setSettings] = useState<RetirementPolicyFormInput>(initialSettings);
   const [saving, setSaving] = useState(false);
 
@@ -28,14 +31,19 @@ export function RetirementPolicySettingsForm({
   }
 
   async function save() {
+    if (saving) return;
     setSaving(true);
     try {
       const result = await saveRetirementPolicySettingsAction(settings);
       if (result.success) {
-        notifySuccess("Retirement age policy updated successfully.");
+        setSettings(result.settings);
+        notifySuccess("Retirement policy updated successfully.");
+        router.refresh();
       } else {
-        notifyError("Failed to update retirement age policy. Please try again.");
+        notifyError(result.message || "Unable to update retirement policy. Please try again.");
       }
+    } catch {
+      notifyError("Unable to update retirement policy. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -46,18 +54,14 @@ export function RetirementPolicySettingsForm({
     try {
       const result = await resetRetirementPolicySettingsAction();
       if (result.success) {
-        setSettings({
-          retirementAge: 60,
-          enforceRetirementCheck: true,
-          allowOverride: true,
-          requireOverrideReason: true,
-          requireApprovalReference: true,
-          defaultStopDayBeforeBirthday: true,
-        });
+        setSettings(result.settings ?? DEFAULT_RETIREMENT_AGE_POLICY);
         notifySuccess("Retirement age policy reset to default.");
+        router.refresh();
       } else {
-        notifyError("Failed to update retirement age policy. Please try again.");
+        notifyError(result.message || "Unable to update retirement policy. Please try again.");
       }
+    } catch {
+      notifyError("Unable to update retirement policy. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -65,21 +69,50 @@ export function RetirementPolicySettingsForm({
 
   return (
     <section className={cardClass}>
-      <div className="grid gap-4 md:grid-cols-2">
+      <p className="text-muted-foreground mb-4 text-sm">
+        Changes to the retirement age will affect retirement alerts, employee age status, contract warnings, and reports
+        going forward.
+      </p>
+      <form
+        className="grid gap-4 md:grid-cols-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void save();
+        }}
+      >
         <div className="space-y-2">
           <Label className="text-sm font-medium">Retirement age</Label>
           <Input
             className="h-10 rounded-md"
             type="number"
-            min="18"
-            max="100"
+            min="45"
+            max="75"
             step="1"
             value={settings.retirementAge}
-            onChange={(e) => update("retirementAge", Number(e.target.value || 60))}
+            onChange={(e) => update("retirementAge", Number(e.target.value || DEFAULT_RETIREMENT_AGE_POLICY.retirementAge))}
           />
           <p className="text-muted-foreground text-xs">
             Contracts are checked against this age when calculating the employee&apos;s retirement cutoff date.
           </p>
+        </div>
+
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">Warning years before retirement</Label>
+          <Input
+            className="h-10 rounded-md"
+            type="number"
+            min="0"
+            max="10"
+            step="1"
+            value={settings.warningYearsBeforeRetirement}
+            onChange={(e) =>
+              update(
+                "warningYearsBeforeRetirement",
+                Number(e.target.value || DEFAULT_RETIREMENT_AGE_POLICY.warningYearsBeforeRetirement),
+              )
+            }
+          />
+          <p className="text-muted-foreground text-xs">Used for retirement-approaching warnings across the system.</p>
         </div>
 
         <label className="flex items-center gap-2 text-sm font-medium md:pt-8">
@@ -131,22 +164,21 @@ export function RetirementPolicySettingsForm({
           />
           Recommend contract end date as day before retirement birthday
         </label>
-      </div>
-
-      <div className="mt-5 flex flex-wrap items-center gap-2">
-        <Button type="button" className="h-10 rounded-md text-sm font-medium" onClick={save} disabled={saving}>
-          Save Settings
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          className="h-10 rounded-md text-sm font-medium"
-          onClick={resetDefault}
-          disabled={saving}
-        >
-          Reset to Default
-        </Button>
-      </div>
+        <div className="mt-1 flex flex-wrap items-center gap-2 md:col-span-2">
+          <Button type="submit" className="h-10 rounded-md text-sm font-medium" disabled={saving}>
+          {saving ? "Saving..." : "Save Settings"}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 rounded-md text-sm font-medium"
+            onClick={resetDefault}
+            disabled={saving}
+          >
+            Reset to Default
+          </Button>
+        </div>
+      </form>
     </section>
   );
 }

@@ -23,6 +23,8 @@
 # misc
 .DS_Store
 *.pem
+tools/license-generator/.env
+tools/license-generator/keys/
 
 # debug
 npm-debug.log*
@@ -53,3 +55,38 @@ backups/database/*.sql
 # Dev artifacts / accidental duplicates
 src/actions/*.backup*
 src/actions/*.broken
+
+# Local environment / secrets
+.env
+.env.local
+.env.production
+.env*.local
+.env.bak*
+*.bak*
+
+# Build/runtime folders
+.next/
+node_modules/
+dist/
+build/
+coverage/
+
+# Backups, releases, uploads, deployment packages
+backups/
+uploads/
+releases/
+deployment/
+DB-HR-upgraded/
+*.zip
+*.tar.gz
+*.tgz
+*.dump
+*.backup
+*.sql
+
+# Logs/temp files
+*.log
+build-error.log
+next
+local-db-hr@*
+tsconfig.tsbuildinfo

@@ -1,5 +1,14 @@
-import { SidebarFooterTray } from "@/components/sidebar-footer-tray";
+import {
+  SidebarFooterTray,
+  type SidebarLicenseIndicator,
+} from "@/components/sidebar-footer-tray";
 
-export function SidebarFooter({ collapsed = false }: { collapsed?: boolean }) {
-  return <SidebarFooterTray collapsed={collapsed} />;
+export function SidebarFooter({
+  collapsed = false,
+  licenseIndicator = null,
+}: {
+  collapsed?: boolean;
+  licenseIndicator?: SidebarLicenseIndicator | null;
+}) {
+  return <SidebarFooterTray collapsed={collapsed} licenseIndicator={licenseIndicator} />;
 }

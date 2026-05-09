@@ -15,6 +15,10 @@ export function notifyInfo(message: string) {
   toast.info(message, { duration: TOAST_DURATION_MS });
 }
 
+export function notifyWarning(message: string) {
+  toast.warning(message, { duration: TOAST_DURATION_MS });
+}
+
 function titleCaseEntity(entity: string) {
   const t = entity.trim();
   if (!t) return "Item";

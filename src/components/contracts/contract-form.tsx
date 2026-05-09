@@ -7,7 +7,8 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useFieldArray, useForm, type SubmitErrorHandler } from "react-hook-form";
 import { useRouter } from "next/navigation";
 
-import { createContractAction, updateContractAction } from "@/actions/contracts";
+import { createContractAction, deleteContractAction, updateContractAction } from "@/actions/contracts";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,7 +27,8 @@ import {
   calculateGratuity,
   contractMonthsBetween,
   defaultGratuitySettings,
-  loadGratuitySettings,
+  resolveGratuityContractMonths,
+  type GratuityCalculationSettings,
 } from "@/lib/gratuity-settings";
 import {
   calculateContractEndDate,
@@ -114,7 +116,7 @@ function toDefaultValues(contract?: ContractRecord): ContractFormValues {
             ? contract.contractNumber
             : "",
         durationPreset: "custom",
-        customDurationMonths: Math.max(1, Math.round(contractMonthsBetween(contract.startDate, contract.endDate))),
+        customDurationMonths: Math.max(1, contractMonthsBetween(contract.startDate, contract.endDate)),
         manualEndDateOverride: false,
         startDate: contract.startDate,
         endDate: contract.endDate,
@@ -176,6 +178,8 @@ export function ContractForm({
   existingContracts,
   retirementPolicy,
   initialContract,
+  gratuitySettings: initialGratuitySettings = defaultGratuitySettings,
+  canDelete = false,
 }: {
   mode: "create" | "edit";
   contractId?: string;
@@ -183,11 +187,15 @@ export function ContractForm({
   existingContracts: ContractRecord[];
   retirementPolicy: RetirementAgePolicy;
   initialContract?: ContractRecord;
+  gratuitySettings?: GratuityCalculationSettings;
+  canDelete?: boolean;
 }) {
   const router = useRouter();
   const [employeeQuery, setEmployeeQuery] = useState("");
   const [showEmployeeResults, setShowEmployeeResults] = useState(false);
-  const [gratuitySettings, setGratuitySettings] = useState(defaultGratuitySettings);
+  const [gratuitySettings] = useState(initialGratuitySettings);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const form = useForm<ContractFormValues>({
     resolver: zodResolver(contractFormSchema),
@@ -254,12 +262,32 @@ export function ContractForm({
     ((retirementPolicy.requireOverrideReason && !retirementOverrideReason?.trim()) ||
       (retirementPolicy.requireApprovalReference && !retirementOverrideApprovalReference?.trim()) ||
       !retirementOverrideConfirmed);
+  const isEditingExpiredContract =
+    mode === "edit" &&
+    Boolean(initialContract?.endDate) &&
+    new Date(`${initialContract?.endDate}T23:59:59`).getTime() < Date.now();
 
-  useEffect(() => {
-    setGratuitySettings(loadGratuitySettings());
-  }, []);
-
-  const contractMonths = contractMonthsBetween(startDate, endDate);
+  const explicitDurationMonths =
+    durationPreset === "custom"
+      ? customDurationMonths === "" || customDurationMonths === undefined
+        ? null
+        : Number(customDurationMonths)
+      : durationPreset === ""
+        ? null
+        : Number(durationPreset);
+  const endDateMatchesExplicitDuration =
+    !manualEndDateOverride &&
+    Boolean(startDate && endDate) &&
+    explicitDurationMonths != null &&
+    Number.isFinite(explicitDurationMonths) &&
+    explicitDurationMonths > 0 &&
+    contractEndDateMatchesPeriod(startDate, endDate, Math.round(explicitDurationMonths));
+  const contractMonths = resolveGratuityContractMonths({
+    startDate,
+    endDate,
+    explicitDurationMonths,
+    endDateMatchesExplicitDuration,
+  });
   const gratuityBreakdown = calculateGratuity({
     monthlySalary: salary,
     contractMonths,
@@ -268,9 +296,10 @@ export function ContractForm({
   });
 
   useEffect(() => {
+    if (isEditingExpiredContract) return;
     setValue("gratuity", Math.round(gratuityBreakdown.netGratuity * 100) / 100);
     setValue("sickRolloverAllowed", false);
-  }, [gratuityBreakdown.netGratuity, setValue]);
+  }, [gratuityBreakdown.netGratuity, isEditingExpiredContract, setValue]);
 
   useEffect(() => {
     if (manualEndDateOverride) return;
@@ -419,13 +448,35 @@ export function ContractForm({
     }
   }
 
+  async function onDeleteContract() {
+    if (!contractId) return;
+    setDeleting(true);
+    try {
+      const result = await deleteContractAction(contractId);
+      if (!result.success) {
+        notifyError(result.message || "Failed to delete contract. Please try again.");
+        return;
+      }
+      notifySuccess("Contract deleted successfully.");
+      const redirectHref = result.employeeId ? `/contracts/employee/${result.employeeId}` : "/contracts";
+      router.push(redirectHref);
+      router.refresh();
+    } catch (err) {
+      const msg = err instanceof Error && err.message ? err.message : "Failed to delete contract. Please try again.";
+      notifyError(msg);
+    } finally {
+      setDeleting(false);
+      setDeleteOpen(false);
+    }
+  }
+
   const cancelHref = mode === "edit" && contractId ? `/contracts/${contractId}` : "/contracts";
 
   return (
     <form onSubmit={handleSubmit(onSubmit, onInvalid)} className="space-y-5">
       <section className={cn(floatingCard, "space-y-4")}>
         <div>
-          <h2 className="text-base font-semibold">Employee Selection</h2>
+          <h2 className="font-heading text-base font-bold tracking-tight">Employee Selection</h2>
         </div>
         <div className="space-y-3">
           <Field label="Employee" required error={errors.employeeId?.message}>
@@ -499,93 +550,107 @@ export function ContractForm({
         <input type="hidden" {...register("employeeId")} />
       </section>
 
-      <section className={cn(floatingCard, "space-y-4")}>
-        <h2 className="text-base font-semibold">Contract Details</h2>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          <Field label="Minute #" error={errors.minuteNumber?.message}>
-            <Input
-              className="rounded-md"
-              placeholder="Enter Executive Council or Secretary minute number"
-              {...register("minuteNumber")}
-            />
-          </Field>
-          <div className="md:col-span-2 lg:col-span-3">
+      <section className={cn(floatingCard, "space-y-6")}>
+        <h2 className="font-heading text-base font-bold tracking-tight">Contract Details</h2>
+        <div className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Minute Number" error={errors.minuteNumber?.message}>
+              <Input
+                className="rounded-md"
+                placeholder="Enter Executive Council or Secretary minute number"
+                {...register("minuteNumber")}
+              />
+            </Field>
+            <Field
+              label="Contract Number"
+              required={!noAssignedContractNumber}
+              error={errors.contractNumber?.message}
+            >
+              <Input
+                className="rounded-md"
+                disabled={noAssignedContractNumber}
+                placeholder={noAssignedContractNumber ? "No assigned number" : undefined}
+                {...register("contractNumber")}
+              />
+            </Field>
+          </div>
+
+          <div>
             <label className="flex items-center gap-2 text-sm font-medium">
               <input type="checkbox" className="size-4 rounded border border-input" {...register("noAssignedContractNumber")} />
               Contract has no assigned number
             </label>
           </div>
-          <Field
-            label="Contract number"
-            required={!noAssignedContractNumber}
-            error={errors.contractNumber?.message}
-          >
-            <Input
-              className="rounded-md"
-              disabled={noAssignedContractNumber}
-              placeholder={noAssignedContractNumber ? "No assigned number" : undefined}
-              {...register("contractNumber")}
-            />
-          </Field>
-          <Field label="Start date" required error={errors.startDate?.message}>
-            <Input type="date" className="rounded-md" {...register("startDate")} />
-          </Field>
-          <Field label="Contract Duration" required error={errors.durationPreset?.message}>
-            <select className={selectClass} {...register("durationPreset")}>
-              <option value="">Select…</option>
-              <option value="3">3 months</option>
-              <option value="6">6 months</option>
-              <option value="12">1 year</option>
-              <option value="24">2 years</option>
-              <option value="custom">Custom months</option>
-            </select>
-          </Field>
-          {durationPreset === "custom" ? (
-            <Field label="Custom Duration Months" required error={errors.customDurationMonths?.message as string | undefined}>
-              <Input type="number" min="1" className="rounded-md" {...register("customDurationMonths")} />
+
+          <div className="grid gap-4 md:grid-cols-3 md:items-start">
+            <Field label="Start Date" required error={errors.startDate?.message}>
+              <Input type="date" className="rounded-md" {...register("startDate")} />
             </Field>
-          ) : (
-            <div />
-          )}
-          <Field label="End date" required error={errors.endDate?.message}>
-            <Input type="date" className="rounded-md" {...register("endDate")} disabled={!manualEndDateOverride} />
-            <p className="text-muted-foreground text-xs">
-              Contract end date is calculated as the day before the next contract period begins.
-            </p>
-          </Field>
-          <label className="flex items-center gap-2 text-sm font-medium md:pt-8">
+            <div className="space-y-4">
+              <Field label="Contract Duration" required error={errors.durationPreset?.message}>
+                <select className={selectClass} {...register("durationPreset")}>
+                  <option value="">Select…</option>
+                  <option value="3">3 months</option>
+                  <option value="6">6 months</option>
+                  <option value="12">1 year</option>
+                  <option value="24">2 years</option>
+                  <option value="custom">Custom months</option>
+                </select>
+              </Field>
+              {durationPreset === "custom" ? (
+                <Field
+                  label="Custom Duration Months"
+                  required
+                  error={errors.customDurationMonths?.message as string | undefined}
+                >
+                  <Input type="number" min="1" className="rounded-md" {...register("customDurationMonths")} />
+                </Field>
+              ) : null}
+            </div>
+            <Field label="End Date" required error={errors.endDate?.message}>
+              <Input type="date" className="rounded-md" {...register("endDate")} disabled={!manualEndDateOverride} />
+              <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
+                Contract end date is calculated as the day before the next contract period begins.
+              </p>
+            </Field>
+          </div>
+
+          <label className="flex items-center gap-2 text-sm font-medium">
             <input type="checkbox" className="size-4 rounded border border-input" {...register("manualEndDateOverride")} />
             Manually override end date
           </label>
-          <Field label="Date employee received contract" error={errors.dateReceived?.message}>
-            <Input type="date" className="rounded-md" {...register("dateReceived")} />
-          </Field>
-          <Field label="Date employee signed contract" error={errors.dateSigned?.message}>
-            <Input type="date" className="rounded-md" {...register("dateSigned")} />
-          </Field>
-          <Field label="Contract status" required error={errors.status?.message}>
-            <select className={selectClass} {...register("status")}>
-              {CONTRACT_STATUS_OPTIONS.map((status) => (
-                <option key={status} value={status}>
-                  {status}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <div className="md:col-span-2 lg:col-span-3">
-            <Field label="Notes" error={errors.notes?.message}>
-              <textarea className="border-input bg-background min-h-24 w-full rounded-md border p-3 text-sm" {...register("notes")} />
+
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <Field label="Date employee received contract" error={errors.dateReceived?.message}>
+              <Input type="date" className="rounded-md" {...register("dateReceived")} />
+            </Field>
+            <Field label="Date employee signed contract" error={errors.dateSigned?.message}>
+              <Input type="date" className="rounded-md" {...register("dateSigned")} />
+            </Field>
+            <Field label="Contract status" required error={errors.status?.message}>
+              <select className={selectClass} {...register("status")}>
+                {CONTRACT_STATUS_OPTIONS.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
             </Field>
           </div>
+
+          <Field label="Notes" error={errors.notes?.message}>
+            <textarea className="border-input bg-background min-h-24 w-full rounded-md border p-3 text-sm" {...register("notes")} />
+          </Field>
+
           {exceedsRetirementCutoff ? (
-            <div className="md:col-span-2 lg:col-span-3 rounded-md border border-amber-300/70 bg-amber-50/80 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-200">
+            <div className="rounded-md border border-amber-300/70 bg-amber-50/80 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-200">
               This contract extends beyond the employee&apos;s configured retirement age of {retirementPolicy.retirementAge} years.
               The recommended contract end date is {retirementCutoffDate ? formatContractDate(retirementCutoffDate) : "—"}.
               {retirementPolicy.allowOverride ? " An override is required to continue." : ""}
             </div>
           ) : null}
           {requiresRetirementOverride ? (
-            <div className="md:col-span-2 lg:col-span-3 space-y-4 rounded-xl border border-border bg-muted/15 p-4">
+            <div className="space-y-4 rounded-xl border border-border bg-muted/15 p-4">
               <h3 className="text-sm font-semibold">Retirement Age Override</h3>
               <Field
                 label="Override reason"
@@ -599,13 +664,13 @@ export function ContractForm({
                 />
               </Field>
               <Field
-                label="Approval reference / Minute number"
+                label="Approval reference / Minute Number"
                 required={retirementPolicy.requireApprovalReference}
                 error={errors.retirementOverrideApprovalReference?.message}
               >
                 <Input
                   className="rounded-md"
-                  placeholder="Enter approval reference, Executive Council minute number, or Secretary minute number."
+                  placeholder="Enter approval reference, Executive Council Minute Number, or Secretary Minute Number."
                   {...register("retirementOverrideApprovalReference")}
                 />
               </Field>
@@ -623,10 +688,16 @@ export function ContractForm({
       </section>
 
       <section className={cn(floatingCard, "space-y-4")}>
-        <h2 className="text-base font-semibold">Compensation</h2>
+        <h2 className="font-heading text-base font-bold tracking-tight">Compensation</h2>
         <p className="text-muted-foreground text-sm">
           Gratuity is calculated using the active rate from Global Settings.
         </p>
+        {isEditingExpiredContract ? (
+          <p className="text-muted-foreground text-sm">
+            This contract is expired. Its gratuity amount is retained as historical and will not be recalculated from
+            current global settings.
+          </p>
+        ) : null}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           <Field label="Salary (TTD)" required error={errors.salary?.message}>
             <Input type="number" step="0.01" min="0" className="rounded-md" {...register("salary")} />
@@ -650,13 +721,18 @@ export function ContractForm({
             <Input className="rounded-md" value={formatCurrencyTTD(gratuityBreakdown.taxDeduction)} disabled readOnly />
           </Field>
           <Field label="Net Gratuity (TTD)" error={errors.gratuity?.message}>
-            <Input className="rounded-md" value={formatCurrencyTTD(gratuityBreakdown.netGratuity)} disabled readOnly />
+            <Input
+              className="rounded-md"
+              value={formatCurrencyTTD(isEditingExpiredContract ? Number(watch("gratuity") || 0) : gratuityBreakdown.netGratuity)}
+              disabled
+              readOnly
+            />
           </Field>
         </div>
       </section>
 
       <section className={cn(floatingCard, "space-y-4")}>
-        <h2 className="text-base font-semibold">Leave Entitlement for Contract Period</h2>
+        <h2 className="font-heading text-base font-bold tracking-tight">Leave Entitlement for Contract Period</h2>
         <p className="text-muted-foreground text-sm">
           Vacation leave may roll over only within the same contract period. Sick leave does not roll over.
         </p>
@@ -680,7 +756,7 @@ export function ContractForm({
 
       <section className={cn(floatingCard, "space-y-4")}>
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-base font-semibold">Allowances</h2>
+          <h2 className="font-heading text-base font-bold tracking-tight">Allowances</h2>
           <Button
             type="button"
             variant="outline"
@@ -816,10 +892,31 @@ export function ContractForm({
         >
           Save Contract
         </Button>
+        {mode === "edit" && contractId && canDelete ? (
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={isSubmitting || deleting}
+            onClick={() => setDeleteOpen(true)}
+          >
+            Delete
+          </Button>
+        ) : null}
         <Link href={cancelHref} className={buttonVariants({ variant: "outline" })}>
           Cancel
         </Link>
       </div>
+
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Delete Contract"
+        description="This deletes this contract only, including linked leave records, leave balances, and contract child records. The employee record will not be deleted."
+        confirmLabel="Delete Contract Only"
+        confirmVariant="destructive"
+        pending={deleting}
+        onConfirm={onDeleteContract}
+      />
     </form>
   );
 }

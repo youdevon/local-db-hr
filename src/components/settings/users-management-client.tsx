@@ -43,13 +43,15 @@ import type { ManagedEmployeeOption, ManagedUserRow } from "@/lib/managed-user";
 import {
   notifyError,
   notifyInfo,
-  notifyItemCreateFailed,
-  notifyItemCreated,
   notifyItemDeactivated,
   notifyItemDeleted,
   notifySuccess,
 } from "@/lib/notify";
-import { createUserFormSchema, type CreateUserFormInput } from "@/lib/validators/user";
+import {
+  createUserFormSchema,
+  type CreateUserFormFieldValues,
+  type CreateUserFormInput,
+} from "@/lib/validators/user";
 import { formatRoleLabel, roleOptions } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
@@ -98,6 +100,8 @@ export function UsersManagementClient({
   const [roleEditUser, setRoleEditUser] = useState<ManagedUserRow | null>(null);
   const [editRoleValue, setEditRoleValue] = useState<AppUserRole>("contributor");
   const [roleSaving, setRoleSaving] = useState(false);
+  const [roleChangeReason, setRoleChangeReason] = useState("");
+  const [roleChangeConfirmed, setRoleChangeConfirmed] = useState(false);
   const [deactivateTarget, setDeactivateTarget] = useState<ManagedUserRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ManagedUserRow | null>(null);
   const [linkUser, setLinkUser] = useState<ManagedUserRow | null>(null);
@@ -107,7 +111,7 @@ export function UsersManagementClient({
   const [linkSaving, setLinkSaving] = useState(false);
   const [removeLinkConfirmOpen, setRemoveLinkConfirmOpen] = useState(false);
 
-  const newUserForm = useForm<CreateUserFormInput>({
+  const newUserForm = useForm<CreateUserFormFieldValues, unknown, CreateUserFormInput>({
     resolver: zodResolver(createUserFormSchema),
     defaultValues: {
       fullName: "",
@@ -117,6 +121,7 @@ export function UsersManagementClient({
       role: "contributor",
       department: "",
       isActive: true,
+      employeeId: "",
     },
   });
 
@@ -130,18 +135,20 @@ export function UsersManagementClient({
 
   function openRoleEdit(user: ManagedUserRow) {
     setEditRoleValue(isAppRole(user.role) ? user.role : "contributor");
+    setRoleChangeReason("");
+    setRoleChangeConfirmed(false);
     setRoleEditUser(user);
   }
 
   async function submitNewUser(values: CreateUserFormInput) {
     const result = await createUserAction(values);
     if (result.ok) {
-      notifyItemCreated("user");
+      notifySuccess(result.message ?? "User account created successfully.");
       reset();
       setNewOpen(false);
       router.refresh();
     } else {
-      notifyItemCreateFailed("user");
+      notifyError(result.message ?? "User account could not be created. Please try again.");
     }
   }
 
@@ -152,6 +159,8 @@ export function UsersManagementClient({
       const result = await updateUserRoleAction({
         userId: roleEditUser.id,
         role: editRoleValue,
+        confirmationAccepted: roleChangeConfirmed,
+        reason: roleChangeReason,
       });
       if (result.ok) {
         notifySuccess(result.message ?? "Role updated successfully.");
@@ -518,6 +527,27 @@ export function UsersManagementClient({
                 {...register("department")}
               />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="nu-employee" className="text-sm font-medium">
+                Linked employee (optional)
+              </Label>
+              <select id="nu-employee" className={selectInputClass} {...register("employeeId")}>
+                <option value="">No employee linked yet</option>
+                {employeeOptions
+                  .filter((option) => !option.attachedUserId)
+                  .map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.fullName} ({option.fileNumber})
+                    </option>
+                  ))}
+              </select>
+              <p className="text-muted-foreground text-xs">
+                Only employees not already linked to another account are listed.
+              </p>
+              {errors.employeeId ? (
+                <p className="text-destructive text-xs">{errors.employeeId.message}</p>
+              ) : null}
+            </div>
             <div className="flex items-center gap-2">
               <Controller
                 name="isActive"
@@ -574,6 +604,27 @@ export function UsersManagementClient({
                 </option>
               ))}
             </select>
+            <div className="space-y-2 pt-2">
+              <Label htmlFor="role-change-reason" className="text-sm font-medium">
+                Reason for role change
+              </Label>
+              <Input
+                id="role-change-reason"
+                className="h-10 rounded-lg text-sm"
+                placeholder="Enter reason"
+                value={roleChangeReason}
+                onChange={(e) => setRoleChangeReason(e.target.value)}
+              />
+            </div>
+            <label className="flex items-center gap-2 pt-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                className="border-input size-4 rounded border"
+                checked={roleChangeConfirmed}
+                onChange={(e) => setRoleChangeConfirmed(e.target.checked)}
+              />
+              I confirm this role change.
+            </label>
           </div>
           <DialogFooter className="gap-2 sm:justify-end">
             <Button type="button" variant="outline" onClick={() => setRoleEditUser(null)}>

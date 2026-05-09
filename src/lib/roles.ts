@@ -41,6 +41,7 @@ const LEGACY_ROLE_MAP: Record<string, UserRole> = {
   "hr manager": "manager",
   manager: "manager",
   "hr officer": "contributor",
+  contributer: "contributor",
   contributor: "contributor",
   auditor: "viewer",
   "read only": "viewer",
@@ -206,7 +207,12 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Permission>> = {
     "profile.viewOwn",
     "profile.changePassword",
   ]),
-  member: new Set(["profile.viewOwn", "profile.changePassword"]),
+  /** Self-service employee: own profile + password + contact self-edit when linked to an employee record. No HR admin or org-wide data. */
+  member: new Set([
+    "profile.viewOwn",
+    "profile.changePassword",
+    "profile.editOwnContactDetails",
+  ]),
 };
 
 export function canPerformAction(roleInput: string | null | undefined, permission: Permission): boolean {
@@ -343,8 +349,15 @@ export function canAccessRoute(roleInput: string | null | undefined, pathname: s
   const path = normalizePathname(pathname);
 
   if (path === "/profile" || path.startsWith("/profile/")) return true;
-  if (path === "/dashboard" || path.startsWith("/dashboard/")) return role !== "member";
-  if (path === "/" || path.startsWith("/unauthorized")) return role !== "member";
+
+  if (role === "member") {
+    if (path === "/" || path === "/dashboard") return true;
+    if (path.startsWith("/dashboard/details")) return false;
+    return false;
+  }
+
+  if (path === "/dashboard" || path.startsWith("/dashboard/")) return true;
+  if (path === "/" || path.startsWith("/unauthorized")) return true;
   if (path.startsWith("/audit")) return role === "administrator";
   if (path.startsWith("/settings") || path.startsWith("/global-settings")) return role === "administrator";
   if (path.startsWith("/reports")) return canPerformAction(role, "reports.view");

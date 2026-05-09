@@ -280,6 +280,12 @@ async function resolveAuditTarget(row: SystemAuditDetailRow): Promise<ResolvedAu
 }
 
 function buildSystemAuditDescription(row: SystemAuditDetailRow, resolvedTarget: ResolvedAuditTarget): string {
+  if (row.metadata && typeof row.metadata === "object") {
+    const meta = row.metadata as Record<string, unknown>;
+    const summary = typeof meta.summary === "string" ? meta.summary.trim() : "";
+    if (summary) return summary;
+  }
+
   const action = (row.action ?? "").trim().toLowerCase();
   const changedFields = metadataChangedFields(row.metadata);
   const appendChanged =
@@ -510,6 +516,13 @@ export default async function SystemAuditDetailPage({
   const ipDisplay = displayAuditIp(row.ip_address ?? null);
   const deviceDisplay = displayAuditDeviceName(row.device_name, row.user_agent ?? null);
   const metadataDisplay = stringifyMetadata(row.metadata);
+  const metaObj =
+    row.metadata && typeof row.metadata === "object"
+      ? (row.metadata as Record<string, unknown>)
+      : null;
+  const changedSectionLabels = Array.isArray(metaObj?.changedSections)
+    ? (metaObj!.changedSections as unknown[]).filter((x): x is string => typeof x === "string")
+    : [];
   const changeSummary = getMetadataChanges(row.metadata);
   const changedItems = changeSummary.filter((item) => item.type === "changed");
   const addedItems = changeSummary.filter((item) => item.type === "added");
@@ -576,6 +589,16 @@ export default async function SystemAuditDetailPage({
         <SectionCard
           title="Change Summary"
         >
+          {changedSectionLabels.length > 0 ? (
+            <div className="mb-4 space-y-1 text-sm">
+              <p className="font-medium text-foreground">Changed sections</p>
+              <ul className="text-muted-foreground list-inside list-disc">
+                {changedSectionLabels.map((s) => (
+                  <li key={s}>{s}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           {changeSummary.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               No detailed field changes were recorded for this action.

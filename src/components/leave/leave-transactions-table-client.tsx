@@ -9,30 +9,41 @@ import { deleteLeaveTransactionAction } from "@/actions/leave";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { DataTable } from "@/components/data-table";
 import { DataTableColumnHeader } from "@/components/data-table-column-header";
-import { StatusBadge } from "@/components/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { notifyError, notifySuccess } from "@/lib/notify";
+import {
+  resolveTransactionContractYearLabel,
+  resolveTransactionContractYearNumber,
+} from "@/lib/leave-transaction-contract-year";
+import type { LeaveDetailData } from "@/lib/server/leave";
 import type { LeaveTransactionListRow } from "@/lib/server/leave";
-import { compareNumber, compareString } from "@/lib/sort-compare";
+import { compareNumber } from "@/lib/sort-compare";
 
-function toneForStatus(status: string): "default" | "success" | "warning" | "danger" | "muted" {
-  const normalized = status.trim().toLowerCase();
-  if (normalized === "approved") return "success";
-  if (normalized === "recorded" || normalized === "adjusted") return "default";
-  if (normalized === "cancelled") return "muted";
-  if (normalized === "rejected") return "danger";
-  return "default";
+function leavePeriodDisplay(row: LeaveTransactionListRow): string {
+  return `${row.startDate} – ${row.endDate}`;
+}
+
+function parseDaysRemainingLabel(raw: string | undefined): number {
+  if (raw == null || raw === "" || raw === "—") return Number.NaN;
+  const n = Number.parseFloat(raw);
+  return Number.isFinite(n) ? n : Number.NaN;
 }
 
 type LeaveTransactionsTableClientProps = {
   transactions: LeaveTransactionListRow[];
+  /** When set, Contract Year is resolved from contractual years for each transaction. */
+  contractYearContracts?: LeaveDetailData["contracts"] | null;
+  /** Same breakdown simulation as Leave Balance / breakdown (vacation/casual + sick pools). */
+  daysRemainingByTransactionId: Record<string, string>;
   canEditLeave: boolean;
   canDeleteLeave: boolean;
 };
 
 export function LeaveTransactionsTableClient({
   transactions,
+  contractYearContracts,
+  daysRemainingByTransactionId,
   canEditLeave,
   canDeleteLeave,
 }: LeaveTransactionsTableClientProps) {
@@ -44,27 +55,18 @@ export function LeaveTransactionsTableClient({
   const columns = useMemo<ColumnDef<LeaveTransactionListRow>[]>(
     () => [
       {
+        id: "leavePeriod",
+        accessorFn: (row) => row._sortStartIso,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Leave Period" />,
+        cell: ({ row }) => (
+          <span className="whitespace-nowrap">{leavePeriodDisplay(row.original)}</span>
+        ),
+        sortingFn: "alphanumeric",
+      },
+      {
         accessorKey: "leaveType",
         header: ({ column }) => <DataTableColumnHeader column={column} title="Leave Type" />,
         cell: ({ row }) => <span className="font-medium">{row.original.leaveType}</span>,
-      },
-      {
-        accessorKey: "_sortStartIso",
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Start Date" />,
-        cell: ({ row }) => row.original.startDate,
-        sortingFn: "alphanumeric",
-      },
-      {
-        accessorKey: "_sortEndIso",
-        header: ({ column }) => <DataTableColumnHeader column={column} title="End Date" />,
-        cell: ({ row }) => row.original.endDate,
-        sortingFn: "alphanumeric",
-      },
-      {
-        accessorKey: "_sortReturnIso",
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Return to Work Date" />,
-        cell: ({ row }) => row.original.returnToWorkDate,
-        sortingFn: "alphanumeric",
       },
       {
         accessorKey: "_sortDays",
@@ -74,26 +76,31 @@ export function LeaveTransactionsTableClient({
           compareNumber(rowA.original._sortDays, rowB.original._sortDays),
       },
       {
-        accessorKey: "contractPeriod",
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Contract Period" />,
+        id: "daysRemaining",
+        accessorFn: (row) => parseDaysRemainingLabel(daysRemainingByTransactionId[row.id]),
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Days Remaining" />,
+        cell: ({ row }) => daysRemainingByTransactionId[row.original.id] ?? "—",
+        sortingFn: (rowA, rowB) => {
+          const a = parseDaysRemainingLabel(daysRemainingByTransactionId[rowA.original.id]);
+          const b = parseDaysRemainingLabel(daysRemainingByTransactionId[rowB.original.id]);
+          if (Number.isNaN(a) && Number.isNaN(b)) return 0;
+          if (Number.isNaN(a)) return 1;
+          if (Number.isNaN(b)) return -1;
+          return compareNumber(a, b);
+        },
       },
       {
-        accessorKey: "status",
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Status" />,
-        cell: ({ row }) => (
-          <StatusBadge tone={toneForStatus(row.original.status)}>{row.original.status}</StatusBadge>
-        ),
+        id: "contractYear",
+        accessorFn: (row) =>
+          resolveTransactionContractYearNumber(row, contractYearContracts ?? undefined) ?? -1,
+        header: ({ column }) => <DataTableColumnHeader column={column} title="Contract Year" />,
+        cell: ({ row }) =>
+          resolveTransactionContractYearLabel(row.original, contractYearContracts ?? undefined),
         sortingFn: (rowA, rowB) =>
-          compareString(rowA.original.status, rowB.original.status),
-      },
-      {
-        accessorKey: "notes",
-        header: ({ column }) => <DataTableColumnHeader column={column} title="Notes" />,
-        cell: ({ row }) => (
-          <span className="max-w-[220px] truncate" title={row.original.notes}>
-            {row.original.notes}
-          </span>
-        ),
+          compareNumber(
+            resolveTransactionContractYearNumber(rowA.original, contractYearContracts ?? undefined) ?? -1,
+            resolveTransactionContractYearNumber(rowB.original, contractYearContracts ?? undefined) ?? -1,
+          ),
       },
       ...(showRowActions
         ? ([
@@ -105,7 +112,7 @@ export function LeaveTransactionsTableClient({
               ),
               cell: ({ row }) => (
                 <div
-                  className="flex items-center justify-end gap-2"
+                  className="flex flex-wrap items-center justify-end gap-2"
                   onClick={(event) => event.stopPropagation()}
                   onKeyDown={(event) => event.stopPropagation()}
                 >
@@ -114,7 +121,8 @@ export function LeaveTransactionsTableClient({
                       href={`/leave/transactions/${row.original.id}/edit`}
                       className={buttonVariants({
                         variant: "outline",
-                        className: "h-8 rounded-md px-3 text-xs font-medium",
+                        size: "sm",
+                        className: "inline-flex h-9 min-w-[72px] items-center justify-center",
                       })}
                     >
                       Edit
@@ -124,8 +132,9 @@ export function LeaveTransactionsTableClient({
                     <Button
                       type="button"
                       variant="destructive"
+                      size="sm"
                       className={cn(
-                        "h-8 rounded-md px-3 text-xs font-medium",
+                        "h-9 min-w-[72px] justify-center",
                         "bg-destructive/85 hover:bg-destructive text-destructive-foreground",
                       )}
                       onClick={() => setDeleteTarget(row.original)}
@@ -139,7 +148,13 @@ export function LeaveTransactionsTableClient({
           ] satisfies ColumnDef<LeaveTransactionListRow>[])
         : []),
     ],
-    [canDeleteLeave, canEditLeave, showRowActions],
+    [
+      canDeleteLeave,
+      canEditLeave,
+      contractYearContracts,
+      daysRemainingByTransactionId,
+      showRowActions,
+    ],
   );
 
   const deleteDescription = useMemo(

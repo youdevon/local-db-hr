@@ -15,6 +15,10 @@ import {
   type ReportDefinition,
   type ReportResult,
 } from "@/lib/reports/report-definitions";
+import {
+  calculateRecommendedRetirementContractEndDate,
+  calculateRetirementDate,
+} from "@/lib/retirement-policy";
 import { getRetirementAgePolicySettings } from "@/lib/retirement-policy-settings";
 import { canPerformAction, normalizeUserRole } from "@/lib/roles";
 import { LOGIN_SESSION_EXPIRED_HREF } from "@/lib/session";
@@ -96,10 +100,6 @@ function ageFromDateOfBirth(dateOfBirth: Date | null | undefined, today = new Da
     age -= 1;
   }
   return age;
-}
-
-function retirementDate(dateOfBirth: Date, retirementAge: number): Date {
-  return new Date(Date.UTC(dateOfBirth.getUTCFullYear() + retirementAge, dateOfBirth.getUTCMonth(), dateOfBirth.getUTCDate()));
 }
 
 function daysDiff(from: Date, to: Date): number {
@@ -468,7 +468,11 @@ async function runContractReports(reportType: string, filters: Record<string, st
       .filter((item) => !!item.employees.date_of_birth)
       .map((item) => {
         const dob = item.employees.date_of_birth as Date;
-        const cutoff = retirementDate(dob, retirementPolicy.retirementAge);
+        const cutoffIso = calculateRecommendedRetirementContractEndDate(
+          dob.toISOString().slice(0, 10),
+          retirementPolicy.retirementAge,
+        );
+        const cutoff = cutoffIso ? new Date(`${cutoffIso}T00:00:00.000Z`) : item.end_date;
         const beyond = daysDiff(cutoff, item.end_date);
         return { item, cutoff, beyond };
       })
@@ -609,7 +613,8 @@ async function runRetirementReports(reportType: string) {
     .map((item) => {
       const dob = item.date_of_birth as Date;
       const age = ageFromDateOfBirth(dob, today) ?? 0;
-      const retirement = retirementDate(dob, policy.retirementAge);
+      const retirementIso = calculateRetirementDate(dob.toISOString().slice(0, 10), policy.retirementAge);
+      const retirement = retirementIso ? new Date(`${retirementIso}T00:00:00.000Z`) : null;
       return {
         fileNumber: item.file_number ?? "—",
         employee: `${item.first_name} ${item.last_name}`.trim(),
@@ -619,11 +624,11 @@ async function runRetirementReports(reportType: string) {
         age,
         retirementAge: policy.retirementAge,
         retirementDate: toDateString(retirement),
-        daysUntilRetirement: daysDiff(today, retirement),
+        daysUntilRetirement: retirement ? daysDiff(today, retirement) : Number.POSITIVE_INFINITY,
       };
     })
     .filter((item) => {
-      if (reportType === "employees-over-retirement-age") return item.age >= policy.retirementAge;
+      if (reportType === "employees-over-retirement-age") return item.daysUntilRetirement < 0;
       return item.daysUntilRetirement >= 0 && item.daysUntilRetirement <= 365;
     });
 }

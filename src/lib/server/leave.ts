@@ -170,6 +170,8 @@ export type LeaveDetailData = {
 
 export type LeaveTransactionListRow = LeaveDetailData["transactions"][number] & {
   employeeId: string;
+  leaveTypeRaw: string;
+  contractIdResolved: string | null;
 };
 
 export type LeaveTransactionEditData = {
@@ -868,6 +870,8 @@ export async function getLeaveTransactionsForEmployee(employeeId: string): Promi
       return {
         id: tx.id,
         employeeId: tx.employee_id,
+        leaveTypeRaw: tx.leave_type,
+        contractIdResolved: resolvedContract?.id ?? null,
         leaveType: getLeaveTypeLabel(tx.leave_type),
         startDate: formatDateLabel(startIso),
         endDate: formatDateLabel(endIso),

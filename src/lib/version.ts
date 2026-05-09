@@ -1,7 +1,7 @@
 import { APP_CONFIG } from "@/lib/app-config";
 
 export function getAppVersion(): string {
-  const version = process.env.NEXT_PUBLIC_APP_VERSION || APP_CONFIG.version || "v0.8.4-beta";
+  const version = process.env.NEXT_PUBLIC_APP_VERSION || APP_CONFIG.version || "v0.11.0-beta";
 
   if (version.startsWith("v")) {
     return version;

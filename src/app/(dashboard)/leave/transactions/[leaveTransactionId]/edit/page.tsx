@@ -36,7 +36,10 @@ export default async function EditLeaveTransactionPage({
   }
   if (!canPerformAction(role, "leave.edit")) {
     redirect(
-      redirectTargetForDeniedWriteRoute(role, `/leave/employee/${transaction.employeeId}/transactions`),
+      redirectTargetForDeniedWriteRoute(
+        role,
+        `/leave/transactions?employeeId=${encodeURIComponent(transaction.employeeId)}`,
+      ),
     );
   }
 
@@ -46,10 +49,13 @@ export default async function EditLeaveTransactionPage({
         breadcrumbItems={[
           { label: "Dashboard", href: "/" },
           { label: "Leave", href: "/leave" },
-          { label: "Leave Transactions", href: `/leave/employee/${transaction.employeeId}/transactions` },
+          {
+            label: "Leave Transactions",
+            href: `/leave/transactions?employeeId=${encodeURIComponent(transaction.employeeId)}`,
+          },
           { label: "Edit Leave" },
         ]}
-        backFallbackHref={`/leave/employee/${transaction.employeeId}/transactions`}
+        backFallbackHref={`/leave/transactions?employeeId=${encodeURIComponent(transaction.employeeId)}`}
         title="Edit Leave"
         icon="calendar-clock"
         description="Correct leave type, dates, return date, days used, status, or notes."

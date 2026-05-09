@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, Geist_Mono } from "next/font/google";
+import { Geist_Mono, Inter, Manrope } from "next/font/google";
 
 import { Providers } from "@/components/providers";
 
@@ -7,7 +7,13 @@ import "./globals.css";
 
 const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-sans",
+  variable: "--font-inter",
+  display: "swap",
+});
+
+const manrope = Manrope({
+  subsets: ["latin"],
+  variable: "--font-manrope",
   display: "swap",
 });
 
@@ -22,6 +28,13 @@ export const metadata: Metadata = {
     template: "%s · Local DB HR",
   },
   description: "Internal HR administration for Local DB HR",
+  icons: {
+    icon: "/favicon.ico",
+    apple: "/favicon.ico",
+  },
+  openGraph: {
+    images: ["/favicon.ico"],
+  },
 };
 
 export default function RootLayout({
@@ -32,10 +45,10 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${geistMono.variable} h-full`}
+      className={`${inter.variable} ${manrope.variable} ${geistMono.variable} h-full`}
       suppressHydrationWarning
     >
-      <body className="bg-background text-foreground min-h-full font-sans antialiased">
+      <body className="bg-background text-foreground min-h-full font-body antialiased">
         <Providers>{children}</Providers>
       </body>
     </html>

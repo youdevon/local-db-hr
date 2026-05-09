@@ -79,6 +79,8 @@ type PageHeaderProps = {
   breadcrumbItems?: BreadcrumbItem[];
   /** Parent route if browser history cannot go back; defaults to second-to-last breadcrumb href or "/". */
   backFallbackHref?: string;
+  /** When set, Back uses this URL instead of browser history.back() (e.g. return from transactions to employee leave detail). */
+  backNavigateHref?: string;
   title: string;
   description?: string;
   icon?: PageHeaderIconKey;
@@ -102,6 +104,7 @@ export function PageHeader({
   hideBreadcrumbNav = false,
   breadcrumbItems,
   backFallbackHref,
+  backNavigateHref,
   title,
   description,
   icon,
@@ -119,7 +122,7 @@ export function PageHeader({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <Breadcrumbs items={items} className="min-w-0 flex-1" />
           <div className="shrink-0 sm:pl-4">
-            <BackLink fallbackHref={fallback} />
+            <BackLink fallbackHref={fallback} navigateHref={backNavigateHref} />
           </div>
         </div>
       ) : null}
@@ -133,7 +136,9 @@ export function PageHeader({
               </div>
             ) : null}
             <div className="min-w-0 space-y-1">
-              <h1 className="text-foreground text-2xl font-semibold tracking-tight">{title}</h1>
+              <h1 className="font-heading text-foreground text-2xl font-bold tracking-tight">
+                {title}
+              </h1>
               {description ? (
                 <p className="text-muted-foreground max-w-2xl text-sm leading-relaxed">{description}</p>
               ) : null}

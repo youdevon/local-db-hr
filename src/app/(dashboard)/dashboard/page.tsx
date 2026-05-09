@@ -9,6 +9,6 @@ import { normalizeUserRole } from "@/lib/roles";
 export default async function DashboardAliasPage() {
   const session = await getSession();
   const role = normalizeUserRole(session.user?.role);
-  if (role === "member") redirect("/profile");
+  if (role === "member") redirect("/");
   redirect("/");
 }

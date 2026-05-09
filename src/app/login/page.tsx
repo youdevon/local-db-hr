@@ -1,9 +1,10 @@
 import { redirect } from "next/navigation";
-import { LockKeyhole } from "lucide-react";
 
+import { AppBrand } from "@/components/app-brand";
+import { FooterCopyrightLink } from "@/components/footer-copyright-link";
 import { LoginForm } from "@/components/login-form";
 import { getSession } from "@/lib/get-session";
-import { APP_CONFIG } from "@/lib/app-config";
+import { getLoginNoticeSettings } from "@/lib/security-settings";
 import { getVersionLabel } from "@/lib/version";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +16,8 @@ export default async function LoginPage({
   searchParams: Promise<{ reason?: string }>;
 }) {
   const session = await getSession();
-  if (session.user) redirect("/");
+  if (session.user) redirect("/dashboard");
+  const loginNoticeSettings = await getLoginNoticeSettings();
   const params = await searchParams;
   const reason = params.reason;
   const wasSessionTimeout = reason === "session-timeout" || reason === "inactive";
@@ -29,13 +31,12 @@ export default async function LoginPage({
       />
       <div className="relative z-[1] mx-auto w-full max-w-md">
         <div className="mb-8 text-center">
-          <div className="inline-flex items-center gap-3">
-            <div className="bg-blue-50 text-blue-600 dark:bg-neutral-800 dark:text-blue-300 flex h-9 w-9 shrink-0 items-center justify-center rounded-md">
-              <LockKeyhole className="h-5 w-5" />
-            </div>
-            <h1 className="text-foreground text-3xl font-semibold tracking-tight sm:text-4xl">
-              Local DB HR
-            </h1>
+          <div className="inline-flex max-w-full items-center justify-center">
+            <AppBrand
+              className="h-auto min-h-10 w-full max-w-full justify-center px-1"
+              textClassName="text-center text-2xl font-bold leading-tight sm:text-3xl"
+              textElement="h1"
+            />
           </div>
           <p className="text-muted-foreground mt-2 text-sm sm:text-[0.9375rem]">
             Secure HR Administration Portal
@@ -52,10 +53,10 @@ export default async function LoginPage({
           ) : null}
         </div>
 
-        <LoginForm />
+        <LoginForm loginNoticeSettings={loginNoticeSettings} />
 
         <footer className="text-muted-foreground mt-8 flex flex-col items-center gap-2 text-center text-xs">
-          <span className="leading-snug">{APP_CONFIG.copyright}</span>
+          <FooterCopyrightLink className="leading-snug" />
           <span className="text-muted-foreground/90">{getVersionLabel()}</span>
         </footer>
       </div>

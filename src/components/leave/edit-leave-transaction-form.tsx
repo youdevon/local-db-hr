@@ -94,12 +94,12 @@ export function EditLeaveTransactionForm({
         contractId: values.contractId || undefined,
       });
       if (!result.success) {
-        notifyError("Failed to update leave record. Please try again.");
+        notifyError(result.message || "Failed to update leave record. Please try again.");
         return;
       }
-      notifySuccess("Leave record updated successfully.");
-      router.push(`/leave/employee/${transaction.employeeId}/transactions`);
+      notifySuccess(result.message);
       router.refresh();
+      router.push(`/leave/transactions?employeeId=${encodeURIComponent(transaction.employeeId)}`);
     } catch (err) {
       const msg = err instanceof Error && err.message ? err.message : "Failed to update leave record. Please try again.";
       notifyError(msg);
@@ -109,7 +109,7 @@ export function EditLeaveTransactionForm({
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
       <section className="rounded-xl border border-border bg-card p-5 shadow-[0_6px_18px_rgba(15,23,42,0.08)] dark:shadow-[0_6px_18px_rgba(0,0,0,0.35)]">
-        <h2 className="text-base font-semibold">Employee & Contract</h2>
+        <h2 className="font-heading text-base font-bold tracking-tight">Employee & Contract</h2>
         <div className="mt-4 grid gap-2 text-sm md:grid-cols-2">
           <p>Employee: {transaction.employeeName}</p>
           <p>File #: {transaction.fileNumber}</p>
@@ -119,7 +119,7 @@ export function EditLeaveTransactionForm({
       </section>
 
       <section className="rounded-xl border border-border bg-card p-5 shadow-[0_6px_18px_rgba(15,23,42,0.08)] dark:shadow-[0_6px_18px_rgba(0,0,0,0.35)]">
-        <h2 className="text-base font-semibold">Edit Leave Details</h2>
+        <h2 className="font-heading text-base font-bold tracking-tight">Edit Leave Details</h2>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
           <Field label="Leave Type" required error={errors.leaveType?.message}>
             <select
@@ -195,7 +195,7 @@ export function EditLeaveTransactionForm({
           Save Changes
         </Button>
         <Link
-          href={`/leave/employee/${transaction.employeeId}/transactions`}
+          href={`/leave/transactions?employeeId=${encodeURIComponent(transaction.employeeId)}`}
           className={buttonVariants({ variant: "outline", className: "h-10 rounded-md text-sm font-medium" })}
         >
           Cancel

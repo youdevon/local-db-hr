@@ -1,4 +1,4 @@
-import { APP_CONFIG } from "@/lib/app-config";
+import { FooterCopyrightLink } from "@/components/footer-copyright-link";
 
 export function MainFooter() {
   return (
@@ -7,9 +7,7 @@ export function MainFooter() {
       role="contentinfo"
     >
       <div className="mx-auto flex h-full w-full max-w-[1400px] items-center justify-center">
-        <span className="text-muted-foreground text-xs leading-none whitespace-nowrap">
-          {APP_CONFIG.copyright}
-        </span>
+        <FooterCopyrightLink className="text-xs leading-none whitespace-nowrap" />
       </div>
     </footer>
   );

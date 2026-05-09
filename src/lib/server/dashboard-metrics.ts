@@ -5,6 +5,10 @@ import { Prisma } from "@prisma/client";
 import { getLeaveTypeLabel } from "@/lib/leave";
 import { prisma } from "@/lib/prisma";
 import { getLeaveWarningSettings } from "@/lib/leave-warning-settings";
+import { DEFAULT_RETIREMENT_AGE_POLICY, calculateRetirementDate } from "@/lib/retirement-policy";
+import { getRetirementAgePolicySettings } from "@/lib/retirement-policy-settings";
+import { getExpiredContractsNoNewForUi } from "@/lib/server/hr";
+import { getLeaveSearchRowsFromDatabase } from "@/lib/server/leave-search";
 
 type PersonListItem = {
   id: string;
@@ -29,6 +33,7 @@ export type ExpiringContractListItem = PersonListItem & {
 
 export type DashboardMetrics = {
   contractsExpiringIn90Days: number;
+  expiredContractsNoNew: number;
   employeesOverRetirementAge: number;
   employeesReachingRetirementWithinOneYear: number;
   contractsBeyondRetirementCutoff: number;
@@ -46,10 +51,13 @@ export type DashboardMetrics = {
   };
   contracts: {
     expiringIn90Days: number;
+    expiredContractsNoNew: number;
     expiringContractList: ExpiringContractListItem[];
     employeesWithNoContract: number;
   };
   retirement: {
+    retirementAge: number;
+    warningYearsBeforeRetirement: number;
     overRetirementAge: number;
     reachingRetirementWithinOneYear: number;
     contractsBeyondRetirementCutoff: number;
@@ -92,21 +100,10 @@ function startOfToday(): Date {
 
 async function getConfiguredRetirementAge(): Promise<number> {
   try {
-    const rows = await prisma.$queryRaw<Array<{ setting_value: unknown }>>(Prisma.sql`
-      SELECT setting_value
-      FROM public.app_settings
-      WHERE setting_key = 'retirement_age_policy'
-      LIMIT 1
-    `);
-    const value = rows[0]?.setting_value;
-    if (!value || typeof value !== "object") return 60;
-    const obj = value as Record<string, unknown>;
-    const rawAge = obj.retirementAge ?? obj.retirement_age;
-    const age = Number(rawAge);
-    if (!Number.isFinite(age) || age < 18 || age > 100) return 60;
-    return Math.round(age);
+    const policy = await getRetirementAgePolicySettings();
+    return policy.retirementAge;
   } catch {
-    return 60;
+    return DEFAULT_RETIREMENT_AGE_POLICY.retirementAge;
   }
 }
 
@@ -229,21 +226,15 @@ export async function getMostUsedLeaveType(): Promise<{
 
 export async function getLowLeaveBalanceCount(): Promise<number> {
   const settings = await getLeaveWarningSettings();
-  const rows = await prisma.$queryRaw<Array<{ count: number }>>(Prisma.sql`
-    SELECT COUNT(DISTINCT lyb.employee_id)::int AS count
-    FROM public.leave_year_balances lyb
-    WHERE
-      lyb.remaining < 0
-      OR lyb.remaining = 0
-      OR (
-        lyb.remaining > 0 AND lyb.remaining <= CASE
-          WHEN lyb.leave_type = 'vacation' THEN ${settings.lowVacationLeaveThresholdDays}
-          WHEN lyb.leave_type = 'sick' THEN ${settings.lowSickLeaveThresholdDays}
-          ELSE ${settings.lowGeneralLeaveThresholdDays}
-        END
-      )
-  `);
-  return rows[0]?.count ?? 0;
+  if (!settings.showLowLeaveBadge) return 0;
+
+  const leaveRows = await getLeaveSearchRowsFromDatabase();
+  const actionableRows = leaveRows.filter((row) => {
+    if (row.status === "Overused" || row.status === "Exhausted") return true;
+    return settings.warnWhenRemainingAtOrBelowThreshold && row.status === "Low";
+  });
+
+  return new Set(actionableRows.map((row) => row.employeeId)).size;
 }
 
 export async function getContractsExpiringIn90Days(): Promise<{
@@ -310,11 +301,14 @@ export async function getEmployeesWithNoContract(): Promise<number> {
 
 export async function getRetirementMetrics(): Promise<{
   retirementAge: number;
+  warningYearsBeforeRetirement: number;
   employeesWithDob: number;
   overRetirementAge: number;
   reachingWithinOneYear: number;
 }> {
-  const retirementAge = await getConfiguredRetirementAge();
+  const policy = await getRetirementAgePolicySettings();
+  const retirementAge = policy.retirementAge;
+  const warningYearsBeforeRetirement = policy.warningYearsBeforeRetirement;
   const employees = await prisma.$queryRaw<Array<{ date_of_birth: Date }>>(Prisma.sql`
     -- Reference:
     -- SELECT
@@ -331,24 +325,27 @@ export async function getRetirementMetrics(): Promise<{
   `);
 
   const today = startOfToday();
-  const oneYearFromToday = addYears(today, 1);
+  const warningCutoffDate = addYears(today, warningYearsBeforeRetirement);
   let overRetirementAge = 0;
   let reachingWithinOneYear = 0;
 
   for (const employee of employees) {
     const dob = toDateOnly(employee.date_of_birth);
-    const retirementDate = toDateOnly(addYears(dob, retirementAge));
+    const retirementDateIso = calculateRetirementDate(dob.toISOString().slice(0, 10), retirementAge);
+    if (!retirementDateIso) continue;
+    const retirementDate = toDateOnly(new Date(`${retirementDateIso}T00:00:00`));
     if (retirementDate <= today) {
       overRetirementAge += 1;
       continue;
     }
-    if (retirementDate > today && retirementDate <= oneYearFromToday) {
+    if (retirementDate >= today && retirementDate <= warningCutoffDate) {
       reachingWithinOneYear += 1;
     }
   }
 
   return {
     retirementAge,
+    warningYearsBeforeRetirement,
     employeesWithDob: employees.length,
     overRetirementAge,
     reachingWithinOneYear,
@@ -356,11 +353,12 @@ export async function getRetirementMetrics(): Promise<{
 }
 
 export async function getEmployeesOverRetirementAge(retirementAge: number): Promise<number> {
+  const retirementYears = Math.trunc(Number(retirementAge)) || 0;
   const rows = await prisma.$queryRaw<Array<{ count: number }>>(Prisma.sql`
     SELECT COUNT(*)::int AS count
     FROM public.employees
     WHERE date_of_birth IS NOT NULL
-      AND DATE_PART('year', AGE(CURRENT_DATE, date_of_birth)) >= ${retirementAge}
+      AND (date_of_birth + make_interval(years => CAST(${retirementYears} AS INTEGER)))::date <= CURRENT_DATE
   `);
   return rows[0]?.count ?? 0;
 }
@@ -378,7 +376,12 @@ export async function getContractsBeyondRetirementCutoff(): Promise<number> {
   `);
 
   const count = rows.reduce((total, row) => {
-    const retirementDate = toDateOnly(addYears(toDateOnly(row.date_of_birth), retirementAge));
+    const retirementDateIso = calculateRetirementDate(
+      toDateOnly(row.date_of_birth).toISOString().slice(0, 10),
+      retirementAge,
+    );
+    if (!retirementDateIso) return total;
+    const retirementDate = toDateOnly(new Date(`${retirementDateIso}T00:00:00`));
     const retirementCutoffDate = toDateOnly(subtractDays(retirementDate, 1));
     const contractEndDate = toDateOnly(row.end_date);
     return contractEndDate > retirementCutoffDate ? total + 1 : total;
@@ -391,6 +394,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   const startMs = Date.now();
   const fallback: DashboardMetrics = {
     contractsExpiringIn90Days: 0,
+    expiredContractsNoNew: 0,
     employeesOverRetirementAge: 0,
     employeesReachingRetirementWithinOneYear: 0,
     contractsBeyondRetirementCutoff: 0,
@@ -408,10 +412,13 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     },
     contracts: {
       expiringIn90Days: 0,
+      expiredContractsNoNew: 0,
       expiringContractList: [],
       employeesWithNoContract: 0,
     },
     retirement: {
+      retirementAge: DEFAULT_RETIREMENT_AGE_POLICY.retirementAge,
+      warningYearsBeforeRetirement: DEFAULT_RETIREMENT_AGE_POLICY.warningYearsBeforeRetirement,
       overRetirementAge: 0,
       reachingRetirementWithinOneYear: 0,
       contractsBeyondRetirementCutoff: 0,
@@ -469,15 +476,17 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     }
   }
 
-  const [birthdays, leaveToday, mostUsedLeaveType, lowLeaveBalances, expiringContracts, retirement, contractsBeyondRetirementCutoff] =
+  const [birthdays, leaveToday, mostUsedLeaveType, lowLeaveBalances, expiringContracts, expiredNoNewContracts, retirement, contractsBeyondRetirementCutoff] =
     await Promise.all([
       safe("birthdays_this_month", getBirthdaysThisMonth, { count: 0, list: [] as BirthdayListItem[] }),
       safe("currently_on_leave_today", getCurrentlyOnLeaveToday, { count: 0, list: [] as LeaveTodayListItem[] }),
       safe("most_used_leave_type", getMostUsedLeaveType, { leaveTypeLabel: "—", totalDays: null as number | null }),
       safe("low_leave_balance_count", getLowLeaveBalanceCount, 0),
       safe("contracts_expiring_list", getContractsExpiringIn90Days, { count: contractsExpiringIn90Days, list: [] as ExpiringContractListItem[] }),
+      safe("expired_contracts_no_new", getExpiredContractsNoNewForUi, [] as Awaited<ReturnType<typeof getExpiredContractsNoNewForUi>>),
       safe("retirement_metrics", getRetirementMetrics, {
-        retirementAge: 60,
+        retirementAge: DEFAULT_RETIREMENT_AGE_POLICY.retirementAge,
+        warningYearsBeforeRetirement: DEFAULT_RETIREMENT_AGE_POLICY.warningYearsBeforeRetirement,
         employeesWithDob: 0,
         overRetirementAge: 0,
         reachingWithinOneYear: 0,
@@ -496,6 +505,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     console.log("[dashboard metrics] employeesOverRetirementAge", employeesOverRetirementAge);
     console.log("[dashboard metrics] retirement", {
       retirementAge: retirement.retirementAge,
+      warningYearsBeforeRetirement: retirement.warningYearsBeforeRetirement,
       employeesWithDob: retirement.employeesWithDob,
       employeesOverRetirementAge,
       employeesReachingRetirementWithinOneYear: retirement.reachingWithinOneYear,
@@ -506,6 +516,7 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   const metrics: DashboardMetrics = {
     ...fallback,
     contractsExpiringIn90Days: contractsExpiringIn90Days,
+    expiredContractsNoNew: expiredNoNewContracts.length,
     employeesOverRetirementAge,
     employeesReachingRetirementWithinOneYear: retirement.reachingWithinOneYear,
     contractsBeyondRetirementCutoff,
@@ -523,10 +534,13 @@ export async function getDashboardMetrics(): Promise<DashboardMetrics> {
     },
     contracts: {
       expiringIn90Days: contractsExpiringIn90Days,
+      expiredContractsNoNew: expiredNoNewContracts.length,
       expiringContractList: expiringContracts.list,
       employeesWithNoContract,
     },
     retirement: {
+      retirementAge: retirement.retirementAge,
+      warningYearsBeforeRetirement: retirement.warningYearsBeforeRetirement,
       overRetirementAge: employeesOverRetirementAge,
       reachingRetirementWithinOneYear: retirement.reachingWithinOneYear,
       contractsBeyondRetirementCutoff,

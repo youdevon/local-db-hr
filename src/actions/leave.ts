@@ -7,25 +7,54 @@ import { redirect } from "next/navigation";
 import { assertViewerCannotMutateOrThrow } from "@/lib/auth-server";
 import { createSystemAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { getSession } from "@/lib/get-session";
-import { canPerformAction, MUTATION_NOT_PERMITTED_MESSAGE } from "@/lib/roles";
+import { sendHrNotification } from "@/lib/email/hr-notifications";
+import { trySendLeaveTakenRecordedEmail } from "@/lib/email/leave-taken-recorded-email";
+import { buildSimpleHrTemplate } from "@/lib/email/templates";
+import {
+  canPerformAction,
+  hasRole,
+  MUTATION_NOT_PERMITTED_MESSAGE,
+} from "@/lib/roles";
 import {
   calculateLeaveRemaining,
   getLeaveEntitlementForContract,
 } from "@/lib/leave-balances";
-import { calculateInclusiveLeaveDays, getLeaveTypeLabel } from "@/lib/leave";
+import {
+  buildLeavePeriodLabelForToast,
+  calculateInclusiveLeaveDays,
+  formatLeaveRecordedSuccessMessage,
+  getLeaveTypeLabel,
+  type LeaveTransactionSummary,
+} from "@/lib/leave";
 import { ensureLeaveInfrastructure } from "@/lib/leave-infrastructure";
 import { LOGIN_SESSION_EXPIRED_HREF } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { findContractForLeavePeriod } from "@/lib/server/contract-period-matching";
-import { syncLeaveYearBalances } from "@/lib/server/leave-year-balances";
+import {
+  getLeaveYearBalances,
+  syncLeaveYearBalances,
+} from "@/lib/server/leave-year-balances";
 import { leaveFormSchema, type LeaveFormValues } from "@/lib/validators/leave-form";
 import {
   leaveTransactionEditSchema,
   type LeaveTransactionEditValues,
 } from "@/lib/validators/leave-form";
 
-type LeaveActionResult = { success: boolean; message: string; leaveId?: string };
-type LeaveMutationResult = { success: boolean; message: string; employeeId?: string };
+type LeaveActionResult =
+  | {
+      success: true;
+      message: string;
+      leaveId?: string;
+      leaveSummary: LeaveTransactionSummary;
+      /** Shown only to administrators when the post-leave email could not be sent. */
+      emailNotificationWarning?: string;
+    }
+  | { success: false; message: string };
+
+/** Update/delete leave transactions (delete omits leaveSummary). */
+type LeaveMutationResult =
+  | { success: true; message: string; employeeId?: string; leaveSummary?: LeaveTransactionSummary }
+  | { success: false; message: string };
 type AuditChange = {
   field: string;
   label: string;
@@ -60,6 +89,85 @@ function formatMatchedContractLabel(match: {
   const minute = match.minuteNumber?.trim() || "No minute #";
   const contract = match.contractNumber?.trim() || "No assigned contract #";
   return `${minute} / ${contract}`;
+}
+
+async function buildLeaveSummaryAfterSync(params: {
+  employeeId: string;
+  contractId: string;
+  leaveType: string;
+  daysTaken: number;
+  contractYear: { startDate: string; endDate: string; yearNumber: number } | null;
+  contractStartDate: string;
+  contractEndDate: string;
+}): Promise<LeaveTransactionSummary> {
+  const balanceLeaveType =
+    params.leaveType === "sick"
+      ? "sick"
+      : params.leaveType === "vacation" || params.leaveType === "casual"
+        ? "vacation"
+        : null;
+
+  const periodLabel = buildLeavePeriodLabelForToast({
+    leaveType: params.leaveType,
+    contractYear: params.contractYear,
+    contractStartDate: params.contractStartDate,
+    contractEndDate: params.contractEndDate,
+  });
+
+  if (!balanceLeaveType) {
+    return {
+      leaveType: params.leaveType,
+      daysTaken: params.daysTaken,
+      remainingDays: null,
+      periodLabel,
+      leaveBalanceId: null,
+    };
+  }
+
+  const balances = await getLeaveYearBalances(params.employeeId, params.contractId);
+  const yearNumber = params.contractYear?.yearNumber;
+  const row =
+    yearNumber != null
+      ? balances.find(
+          (b) => b.leave_type === balanceLeaveType && b.contract_year_number === yearNumber,
+        )
+      : [...balances]
+          .filter((b) => b.leave_type === balanceLeaveType)
+          .sort((a, b) => b.contract_year_number - a.contract_year_number)[0];
+
+  let remainingDays: number | null = null;
+  if (row != null) {
+    const yearStartDate = params.contractYear?.startDate ?? row.year_start_date.toISOString().slice(0, 10);
+    const yearEndDate = params.contractYear?.endDate ?? row.year_end_date.toISOString().slice(0, 10);
+    const usageRows = await prisma.$queryRaw<Array<{ used_days: number }>>(Prisma.sql`
+      SELECT COALESCE(SUM(leave_days::numeric), 0)::float8 AS used_days
+      FROM public.leave_transactions
+      WHERE employee_id::text = ${params.employeeId}
+        AND contract_id::text = ${params.contractId}
+        AND start_date >= ${toDate(yearStartDate)}::date
+        AND start_date <= ${toDate(yearEndDate)}::date
+        AND status IN ('recorded', 'approved', 'adjusted')
+        AND (
+          (${balanceLeaveType} = 'sick' AND leave_type = 'sick')
+          OR
+          (${balanceLeaveType} = 'vacation' AND leave_type IN ('vacation', 'casual'))
+        )
+    `);
+    const usedDays = Math.round(Number(usageRows[0]?.used_days ?? 0));
+    const availableDays = Math.round(
+      Number(row.entitlement ?? 0) + Number(row.rollover_in ?? 0) + Number(row.adjustment ?? 0),
+    );
+    remainingDays = availableDays - usedDays;
+  }
+  const leaveBalanceId = row?.id ?? null;
+
+  return {
+    leaveType: params.leaveType,
+    daysTaken: params.daysTaken,
+    remainingDays,
+    periodLabel,
+    leaveBalanceId,
+  };
 }
 
 async function syncLeaveBalancesForEmployeeContracts(
@@ -111,6 +219,7 @@ export async function createLeaveAction(input: LeaveFormValues): Promise<LeaveAc
       deviceName: deviceLabel,
       userAgent,
     });
+
     return { success: false, message: "Failed to create leave record. Please try again." };
   }
 
@@ -189,7 +298,7 @@ export async function createLeaveAction(input: LeaveFormValues): Promise<LeaveAc
       const enforceBalance = data.leaveType === "vacation" || data.leaveType === "sick";
 
       if (enforceBalance && projectedRemaining < 0) {
-        throw new Error("Requested leave exceeds the remaining balance for this contract period.");
+        throw new Error("Unable to record leave. Requested days exceed the available balance.");
       }
 
       const result = await tx.$queryRaw<Array<{ id: string }>>(
@@ -229,6 +338,9 @@ export async function createLeaveAction(input: LeaveFormValues): Promise<LeaveAc
         employeeName: employee.full_name || "Employee",
         leaveLabel: getLeaveTypeLabel(data.leaveType),
         contractId,
+        contractYear: matched.contractYear,
+        contractStartDate: matched.contract.startDate,
+        contractEndDate: matched.contract.endDate,
         matchedContractLabel: formatMatchedContractLabel(matched.contract),
         matchedContractPeriod: `${matched.contract.startDate} – ${matched.contract.endDate}`,
         matchedContractYear: matched.contractYear
@@ -241,6 +353,17 @@ export async function createLeaveAction(input: LeaveFormValues): Promise<LeaveAc
     if (created.contractId) {
       await syncLeaveYearBalances(data.employeeId, created.contractId, actorUserId);
     }
+
+    const leaveSummary = await buildLeaveSummaryAfterSync({
+      employeeId: data.employeeId,
+      contractId: created.contractId,
+      leaveType: data.leaveType,
+      daysTaken: requestedDays,
+      contractYear: created.contractYear,
+      contractStartDate: created.contractStartDate,
+      contractEndDate: created.contractEndDate,
+    });
+    const message = formatLeaveRecordedSuccessMessage(leaveSummary, "recorded");
 
     await createSystemAuditLog({
       actorUserId,
@@ -261,13 +384,44 @@ export async function createLeaveAction(input: LeaveFormValues): Promise<LeaveAc
         matchedContractPeriod: created.matchedContractPeriod,
         matchedContractYear: created.matchedContractYear,
         historicalMatch: created.historicalMatch,
+        employeeId: data.employeeId,
+        employeeName: created.employeeName,
+        leaveType: data.leaveType,
+        daysTaken: requestedDays,
+        period: leaveSummary.periodLabel,
+        remainingBalanceAfter: leaveSummary.remainingDays,
       },
     });
 
+    const emailFollowUp = await trySendLeaveTakenRecordedEmail({
+      employeeId: data.employeeId,
+      contractId: created.contractId,
+      employeeName: created.employeeName,
+      leaveType: data.leaveType,
+      startDate: data.startDate,
+      endDate: data.endDate,
+      daysTaken: requestedDays,
+      leaveSummary,
+      contractYear: created.contractYear,
+      contractStartDate: created.contractStartDate,
+      contractEndDate: created.contractEndDate,
+    });
+    const emailNotificationWarning =
+      emailFollowUp.adminWarning && hasRole(actorUser.role, ["administrator", "manager"])
+        ? emailFollowUp.adminWarning
+        : undefined;
+
     revalidatePath("/leave");
     revalidatePath(`/leave/employee/${data.employeeId}`);
+    revalidatePath("/leave/transactions");
     revalidatePath("/");
-    return { success: true, message: "Leave record created successfully.", leaveId: created.leaveId };
+    return {
+      success: true,
+      message,
+      leaveId: created.leaveId,
+      leaveSummary,
+      emailNotificationWarning,
+    };
   } catch (error) {
     const failureReason =
       error instanceof Error && error.message
@@ -454,6 +608,52 @@ export async function updateLeaveTransactionAction(
         });
       }
 
+      const contractRowsForBalance = await tx.$queryRaw<
+        Array<{
+          id: string;
+          contract_number: string | null;
+          start_date: Date;
+          end_date: Date;
+          vacation_leave_entitlement: number;
+          sick_leave_entitlement: number;
+        }>
+      >(Prisma.sql`
+        SELECT
+          id::text AS id,
+          contract_number,
+          start_date,
+          end_date,
+          vacation_leave_entitlement::numeric::float8 AS vacation_leave_entitlement,
+          sick_leave_entitlement::numeric::float8 AS sick_leave_entitlement
+        FROM public.contracts
+        WHERE id::text = ${matchedContractId}
+        LIMIT 1
+      `);
+      const contractForBalance = contractRowsForBalance[0] ?? null;
+
+      const usedRowsExcludingSelf = await tx.$queryRaw<Array<{ used_days: number }>>(Prisma.sql`
+        SELECT COALESCE(SUM(leave_days::numeric), 0)::float8 AS used_days
+        FROM public.leave_transactions
+        WHERE employee_id::text = ${existing.employee_id}
+          AND contract_id::text = ${matchedContractId}
+          AND id::text <> ${data.id}
+          AND (
+            (${data.leaveType} = 'sick' AND leave_type = 'sick')
+            OR
+            (${data.leaveType} IN ('vacation', 'casual') AND leave_type IN ('vacation', 'casual'))
+          )
+          AND status IN ('recorded', 'approved', 'adjusted')
+      `);
+      const usedOtherTx = Number(usedRowsExcludingSelf[0]?.used_days ?? 0);
+      const entitlementUpdate = contractForBalance
+        ? getLeaveEntitlementForContract(contractForBalance, data.leaveType) ?? 0
+        : 0;
+      const projectedRemainingUpdate = calculateLeaveRemaining(entitlementUpdate, usedOtherTx + requestedDays);
+      const enforceBalanceUpdate = data.leaveType === "vacation" || data.leaveType === "sick";
+      if (enforceBalanceUpdate && projectedRemainingUpdate < 0) {
+        throw new Error("Unable to record leave. Requested days exceed the available balance.");
+      }
+
       await tx.$executeRaw(Prisma.sql`
         UPDATE public.leave_transactions
         SET
@@ -479,6 +679,9 @@ export async function updateLeaveTransactionAction(
         beforeLeaveType: existing.leave_type,
         afterLeaveType: data.leaveType,
         changes,
+        contractYear: matched.contractYear,
+        contractStartDate: matched.contract.startDate,
+        contractEndDate: matched.contract.endDate,
         matchedContractLabel: formatMatchedContractLabel(matched.contract),
         matchedContractPeriod: `${matched.contract.startDate} – ${matched.contract.endDate}`,
         matchedContractYear: matched.contractYear
@@ -492,6 +695,17 @@ export async function updateLeaveTransactionAction(
       await syncLeaveYearBalances(result.employeeId, result.previousContractId, actorUserId);
     }
     await syncLeaveYearBalances(result.employeeId, result.contractId, actorUserId);
+
+    const leaveSummary = await buildLeaveSummaryAfterSync({
+      employeeId: result.employeeId,
+      contractId: result.contractId,
+      leaveType: data.leaveType,
+      daysTaken: requestedDays,
+      contractYear: result.contractYear,
+      contractStartDate: result.contractStartDate,
+      contractEndDate: result.contractEndDate,
+    });
+    const message = formatLeaveRecordedSuccessMessage(leaveSummary, "updated");
 
     await createSystemAuditLog({
       actorUserId,
@@ -513,15 +727,50 @@ export async function updateLeaveTransactionAction(
         matchedContractYear: result.matchedContractYear,
         historicalMatch: result.historicalMatch,
         changes: result.changes,
+        employeeId: result.employeeId,
+        employeeName: result.employeeName,
+        leaveType: data.leaveType,
+        daysTaken: requestedDays,
+        period: leaveSummary.periodLabel,
+        remainingBalanceAfter: leaveSummary.remainingDays,
+      },
+    });
+
+    await sendHrNotification({
+      notificationType: "leave_transaction_updated",
+      settingKey: "sendLeaveTransactionUpdatedAlerts",
+      employeeId: result.employeeId,
+      contractId: result.contractId,
+      leaveBalanceId: leaveSummary.leaveBalanceId ?? null,
+      subject: `${getLeaveTypeLabel(data.leaveType)} Updated`,
+      text: buildSimpleHrTemplate({
+        greetingName: result.employeeName,
+        lines: [
+          `Your ${getLeaveTypeLabel(data.leaveType).toLowerCase()} transaction was updated.`,
+          `Leave period: ${leaveSummary.periodLabel}`,
+          `Days recorded: ${leaveSummary.daysTaken}`,
+          leaveSummary.remainingDays == null
+            ? "Remaining leave balance: not tracked."
+            : `Remaining leave balance: ${leaveSummary.remainingDays} day(s).`,
+        ],
+      }),
+      metadata: {
+        employeeId: result.employeeId,
+        contractId: result.contractId,
+        leaveTransactionId: result.id,
+        leaveType: data.leaveType,
+        daysTaken: leaveSummary.daysTaken,
+        remainingDays: leaveSummary.remainingDays,
+        periodLabel: leaveSummary.periodLabel,
       },
     });
 
     revalidatePath("/leave");
     revalidatePath(`/leave/employee/${result.employeeId}`);
-    revalidatePath(`/leave/employee/${result.employeeId}/transactions`);
+    revalidatePath("/leave/transactions");
     revalidatePath(`/leave/transactions/${result.id}/edit`);
     revalidatePath("/");
-    return { success: true, message: "Leave record updated successfully.", employeeId: result.employeeId };
+    return { success: true, message, employeeId: result.employeeId, leaveSummary };
   } catch (error) {
     const failureReason =
       error instanceof Error && error.message
@@ -636,9 +885,31 @@ export async function deleteLeaveTransactionAction(
       },
     });
 
+    await sendHrNotification({
+      notificationType: "leave_transaction_deleted",
+      settingKey: "sendLeaveTransactionDeletedAlerts",
+      employeeId: result.employee_id,
+      contractId: result.contract_id,
+      subject: `${getLeaveTypeLabel(result.leave_type)} Deleted`,
+      text: buildSimpleHrTemplate({
+        greetingName: result.employee_name || "Employee",
+        lines: [
+          `A ${getLeaveTypeLabel(result.leave_type).toLowerCase()} transaction was deleted.`,
+          `Leave dates: ${formatIsoDate(result.start_date) ?? "—"} to ${formatIsoDate(result.end_date) ?? "—"}`,
+          `Days removed: ${Math.round(Number(result.leave_days ?? 0))}`,
+        ],
+      }),
+      metadata: {
+        employeeId: result.employee_id,
+        contractId: result.contract_id,
+        leaveTransactionId: result.id,
+        leaveType: result.leave_type,
+      },
+    });
+
     revalidatePath("/leave");
     revalidatePath(`/leave/employee/${result.employee_id}`);
-    revalidatePath(`/leave/employee/${result.employee_id}/transactions`);
+    revalidatePath("/leave/transactions");
     revalidatePath("/");
     return { success: true, message: "Leave record deleted successfully.", employeeId: result.employee_id };
   } catch (error) {

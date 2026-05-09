@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import type {
   EmployeeAddressRow,
   EmployeeDocumentRow,
@@ -486,6 +486,21 @@ export type EmployeeContractHistoryContract = {
   status: string;
 };
 
+export type ExpiredContractNoNewRow = {
+  contractId: string;
+  contractNumber: string;
+  fileNumber: string;
+  firstName: string;
+  lastName: string;
+  position: string;
+  startDate: string;
+  endDate: string;
+  salary: string;
+  gratuity: string;
+  daysExpired: number;
+  statusLabel: "Expired - No New Contract";
+};
+
 export async function getEmployeeContractHistoryForUi(employeeId: string): Promise<{
   employee: EmployeeContractHistoryEmployee | null;
   contracts: EmployeeContractHistoryContract[];
@@ -572,5 +587,82 @@ export async function getEmployeeContractHistoryForUi(employeeId: string): Promi
     };
   } catch {
     return { employee: null, contracts: [] };
+  }
+}
+
+export async function getExpiredContractsNoNewForUi(): Promise<ExpiredContractNoNewRow[]> {
+  try {
+    const rows = await prisma.$queryRaw<
+      Array<{
+        contract_id: string;
+        contract_number: string | null;
+        file_number: string;
+        first_name: string;
+        last_name: string;
+        position: string | null;
+        start_date: Date;
+        end_date: Date;
+        salary: number;
+        gratuity: number;
+        days_expired: number;
+      }>
+    >(Prisma.sql`
+      WITH latest_expired AS (
+        SELECT DISTINCT ON (c.employee_id)
+          c.id::text AS contract_id,
+          c.employee_id::text AS employee_id,
+          c.contract_number,
+          c.start_date,
+          c.end_date,
+          c.salary::numeric::float8 AS salary,
+          c.gratuity::numeric::float8 AS gratuity
+        FROM public.contracts c
+        WHERE c.end_date < CURRENT_DATE
+        ORDER BY c.employee_id, c.end_date DESC, c.start_date DESC, c.created_at DESC
+      )
+      SELECT
+        le.contract_id,
+        le.contract_number,
+        e.file_number,
+        e.first_name,
+        e.last_name,
+        e.position,
+        le.start_date,
+        le.end_date,
+        le.salary,
+        le.gratuity,
+        (CURRENT_DATE - le.end_date)::int AS days_expired
+      FROM latest_expired le
+      JOIN public.employees e
+        ON e.id::text = le.employee_id
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM public.contracts newer
+        WHERE newer.employee_id::text = le.employee_id
+          AND (
+            (CURRENT_DATE BETWEEN newer.start_date AND newer.end_date)
+            OR newer.start_date > CURRENT_DATE
+            OR newer.end_date >= CURRENT_DATE
+          )
+      )
+      ORDER BY le.end_date ASC, e.last_name ASC, e.first_name ASC
+    `);
+
+    return rows.map((row) => ({
+      contractId: row.contract_id,
+      contractNumber: row.contract_number?.trim() || "No assigned number",
+      fileNumber: row.file_number || "—",
+      firstName: row.first_name,
+      lastName: row.last_name,
+      position: row.position?.trim() || "—",
+      startDate: toIsoDate(row.start_date),
+      endDate: toIsoDate(row.end_date),
+      salary: formatCurrencyTTD(Number(row.salary)),
+      gratuity: formatCurrencyTTD(Number(row.gratuity)),
+      daysExpired: Math.max(0, Number(row.days_expired ?? 0)),
+      statusLabel: "Expired - No New Contract",
+    }));
+  } catch {
+    return [];
   }
 }

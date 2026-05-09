@@ -6,6 +6,8 @@ import { revalidatePath } from "next/cache";
 import { assertViewerCannotMutateOrThrow, getSessionUserId, requirePermission } from "@/lib/auth-server";
 import { MUTATION_NOT_PERMITTED_MESSAGE } from "@/lib/roles";
 import { createSystemAuditLog, getAuditRequestContext } from "@/lib/audit";
+import { sendHrNotification } from "@/lib/email/hr-notifications";
+import { buildNewContractRecordedTemplate, buildSimpleHrTemplate } from "@/lib/email/templates";
 import { prisma } from "@/lib/prisma";
 import { syncLeaveYearBalances } from "@/lib/server/leave-year-balances";
 import {
@@ -17,6 +19,10 @@ import { contractFormSchema, type ContractFormValues } from "@/lib/validators/co
 
 type ContractActionResult =
   | { success: true; message: string; contractId: string }
+  | { success: false; message: string };
+
+export type DeleteContractResult =
+  | { success: true; message: "Contract deleted successfully."; employeeId: string | null }
   | { success: false; message: string };
 
 type AuditChange = {
@@ -484,6 +490,34 @@ export async function createContractAction(input: ContractFormValues): Promise<C
       deviceName: deviceLabel,
       userAgent,
     });
+    const employeeContact = await prisma.employees.findUnique({
+      where: { id: data.employeeId },
+      select: { first_name: true, last_name: true, position: true },
+    });
+    const employeeName = `${employeeContact?.first_name ?? ""} ${employeeContact?.last_name ?? ""}`.trim() || "Employee";
+    const contractTemplate = buildNewContractRecordedTemplate({
+      employeeName,
+      contractNumber: data.contractNumber ?? "Not assigned",
+      position: employeeContact?.position?.trim() || "Not specified",
+      startDate: data.startDate.toISOString().slice(0, 10),
+      endDate: data.endDate.toISOString().slice(0, 10),
+    });
+    await sendHrNotification({
+      notificationType: "contract_created",
+      settingKey: "sendNewContractAlerts",
+      employeeId: data.employeeId,
+      contractId: created.contract.id,
+      ...contractTemplate,
+      metadata: {
+        employeeId: data.employeeId,
+        employeeName,
+        contractId: created.contract.id,
+        contractNumber: data.contractNumber,
+        position: employeeContact?.position?.trim() || null,
+        startDate: data.startDate.toISOString().slice(0, 10),
+        endDate: data.endDate.toISOString().slice(0, 10),
+      },
+    });
 
     return { success: true, message: "Contract created successfully.", contractId: created.contract.id };
   } catch (error) {
@@ -895,7 +929,14 @@ export async function updateContractAction(
         }
       }
 
-      return { contract, requiresRetirementOverride, retirementCutoffDate, changes };
+      return {
+        contract,
+        requiresRetirementOverride,
+        retirementCutoffDate,
+        changes,
+        beforeStatus: existing.status ?? null,
+        afterStatus: data.status,
+      };
     });
 
     revalidatePath("/contracts");
@@ -929,6 +970,34 @@ export async function updateContractAction(
       ipAddress: ip,
       deviceName: deviceLabel,
       userAgent,
+    });
+    const normalizedBeforeStatus = (updated.beforeStatus ?? "").trim().toLowerCase();
+    const normalizedAfterStatus = (updated.afterStatus ?? "").trim().toLowerCase();
+    const terminatedTransition =
+      normalizedAfterStatus === "terminated" && normalizedBeforeStatus !== "terminated";
+
+    await sendHrNotification({
+      notificationType: terminatedTransition ? "contract_terminated" : "contract_updated",
+      settingKey: "sendContractUpdatedAlerts",
+      employeeId: data.employeeId,
+      contractId: updated.contract.id,
+      subject: terminatedTransition ? "Contract Terminated" : "Contract Updated",
+      text: buildSimpleHrTemplate({
+        lines: [
+          terminatedTransition ? "A contract has been terminated." : "A contract has been updated.",
+          `Contract number: ${data.contractNumber ?? "Not assigned"}`,
+          `Start date: ${data.startDate.toISOString().slice(0, 10)}`,
+          `End date: ${data.endDate.toISOString().slice(0, 10)}`,
+          `Status: ${data.status}`,
+        ],
+      }),
+      metadata: {
+        employeeId: data.employeeId,
+        contractId: updated.contract.id,
+        beforeStatus: updated.beforeStatus,
+        afterStatus: updated.afterStatus,
+        changedFields: updated.changes.map((c) => c.field),
+      },
     });
 
     return { success: true, message: "Contract updated successfully.", contractId: updated.contract.id };
@@ -965,6 +1034,101 @@ export async function updateContractAction(
       deviceName: deviceLabel,
       userAgent,
     });
+    return { success: false, message: failureMessage };
+  }
+}
+
+export async function deleteContractAction(contractId: string): Promise<DeleteContractResult> {
+  await assertViewerCannotMutateOrThrow();
+  const access = await requirePermission("contracts.delete");
+  if (!access) {
+    return { success: false, message: MUTATION_NOT_PERMITTED_MESSAGE };
+  }
+
+  const actorUserId = await getSessionUserId();
+  const { ip, userAgent, deviceLabel } = await getAuditRequestContext();
+
+  try {
+    const contract = await prisma.contracts.findUnique({
+      where: { id: contractId },
+      select: {
+        id: true,
+        employee_id: true,
+        contract_number: true,
+        minute_number: true,
+      },
+    });
+
+    if (!contract) {
+      return { success: false, message: "Contract not found." };
+    }
+
+    const targetLabel = contract.contract_number
+      ? `Contract: ${contract.contract_number}`
+      : `Contract: ${contract.minute_number ?? contract.id}`;
+
+    const deletedCounts = await prisma.$transaction(async (tx) => {
+      const deletedLeaveTransactions = await tx.leave_transactions.deleteMany({
+        where: { contract_id: contractId },
+      });
+      const deletedLeaveYearBalances = await tx.leave_year_balances.deleteMany({
+        where: { contract_id: contractId },
+      });
+      const deletedAllowances = await tx.contract_allowances.deleteMany({
+        where: { contract_id: contractId },
+      });
+      await tx.contracts.delete({
+        where: { id: contractId },
+      });
+
+      return {
+        leaveTransactions: deletedLeaveTransactions.count,
+        leaveYearBalances: deletedLeaveYearBalances.count,
+        contractAllowances: deletedAllowances.count,
+      };
+    });
+
+    revalidatePath("/contracts");
+    revalidatePath("/contracts/directory");
+    revalidatePath(`/contracts/${contractId}`);
+    revalidatePath(`/contracts/employee/${contract.employee_id}`);
+    revalidatePath(`/employees/${contract.employee_id}`);
+    revalidatePath("/");
+
+    await createSystemAuditLog({
+      actorUserId,
+      module: "Contracts",
+      action: "deleted_contract",
+      targetType: "contract",
+      targetId: contractId,
+      targetLabel,
+      success: true,
+      metadata: deletedCounts,
+      ipAddress: ip,
+      deviceName: deviceLabel,
+      userAgent,
+    });
+
+    return {
+      success: true,
+      message: "Contract deleted successfully.",
+      employeeId: contract.employee_id ?? null,
+    };
+  } catch (error) {
+    const failureMessage = "Failed to delete contract. Please try again.";
+    await createSystemAuditLog({
+      actorUserId,
+      module: "Contracts",
+      action: "deleted_contract",
+      targetType: "contract",
+      targetId: contractId,
+      success: false,
+      failureReason: failureMessage,
+      ipAddress: ip,
+      deviceName: deviceLabel,
+      userAgent,
+    });
+    console.error("[contracts:delete] failed", error);
     return { success: false, message: failureMessage };
   }
 }

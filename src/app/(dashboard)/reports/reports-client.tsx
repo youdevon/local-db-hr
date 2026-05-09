@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { BarChart3, Download, Printer, Search } from "lucide-react";
 
-import { runReportAction } from "./actions";
+import { logReportExportAction, runReportAction } from "./actions";
 import { DataTableColumnHeader } from "@/components/data-table-column-header";
 import { EmployeeCombobox } from "@/components/employee-combobox";
 import { EmptyState } from "@/components/empty-state";
@@ -38,6 +38,8 @@ type ReportsClientProps = {
     ageConditions: Array<{ label: string; value: string }>;
   };
   canExport: boolean;
+  requireExportReason: boolean;
+  includeExportMetadata: boolean;
 };
 
 type FilterMap = Record<string, string>;
@@ -104,7 +106,14 @@ function requiredForFilter(report: ReportDefinition, key: string, filters: Filte
   return false;
 }
 
-export function ReportsClient({ categories, reports, filterOptions, canExport }: ReportsClientProps) {
+export function ReportsClient({
+  categories,
+  reports,
+  filterOptions,
+  canExport,
+  requireExportReason,
+  includeExportMetadata,
+}: ReportsClientProps) {
   const [categoryId, setCategoryId] = useState(categories[0]?.id ?? "employee");
   const reportsByCategory = useMemo(() => reports.filter((item) => item.category === categoryId), [reports, categoryId]);
   const [reportType, setReportType] = useState(reportsByCategory[0]?.id ?? reports[0]?.id ?? "");
@@ -161,8 +170,18 @@ export function ReportsClient({ categories, reports, filterOptions, canExport }:
 
   async function exportExcel() {
     if (!result) return;
+    let exportReason: string | undefined;
+    if (requireExportReason) {
+      const reason = window.prompt("Export reason is required. Please enter a reason:");
+      if (!reason || !reason.trim()) {
+        notifyError("Export reason is required.");
+        return;
+      }
+      exportReason = reason.trim();
+    }
     setIsExporting(true);
     try {
+      await logReportExportAction(selectedReport.id, exportReason);
       const XLSX = await import("xlsx");
       const worksheetRows = result.rows.length ? result.rows : [{ Notice: "No records found for the selected filters." }];
       const ws = XLSX.utils.json_to_sheet(worksheetRows);
@@ -369,8 +388,8 @@ export function ReportsClient({ categories, reports, filterOptions, canExport }:
               Preview shows first {result.previewLimit} matching rows. Total matching rows: {result.totalMatchingRows}.
             </p>
             <div className="print-only hidden space-y-1">
-              <h2 className="text-lg font-semibold">{result.title}</h2>
-              <p className="text-sm">Generated: {result.generatedAt}</p>
+              <h2 className="font-heading text-lg font-bold tracking-tight">{result.title}</h2>
+              {includeExportMetadata ? <p className="text-sm">Generated: {result.generatedAt}</p> : null}
               <p className="text-sm">
                 Filters:{" "}
                 {Object.entries(result.filtersApplied)
