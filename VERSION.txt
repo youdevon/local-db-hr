@@ -1,4 +1,1 @@
-Local DB HR
-Version: v0.9.0-beta
-Deployment Type: Portable Full-Stack Docker Compose
-Maintainer: D3 Services
+0.12.0-beta

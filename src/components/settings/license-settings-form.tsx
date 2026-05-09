@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { maskLicenseKey } from "@/lib/license";
 import type { ComputedLicenseStatus } from "@/lib/license";
+import { LicenseUpdatesSection } from "@/components/settings/license-updates-section";
 
 const cardClass =
   "rounded-xl border border-border bg-card p-5 shadow-[0_6px_18px_rgba(15,23,42,0.08)] dark:shadow-[0_6px_18px_rgba(0,0,0,0.35)]";
@@ -41,9 +42,11 @@ function formatDateTime(value: string | null): string {
 type Props = {
   license: ComputedLicenseStatus;
   providerControlsEnabled: boolean;
+  installedVersion: string;
+  updateManifestUrl: string;
 };
 
-export function LicenseSettingsForm({ license, providerControlsEnabled }: Props) {
+export function LicenseSettingsForm({ license, providerControlsEnabled, installedVersion, updateManifestUrl }: Props) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
 
@@ -69,6 +72,7 @@ export function LicenseSettingsForm({ license, providerControlsEnabled }: Props)
   if (!settings) {
     return (
       <div className="space-y-6">
+        <LicenseUpdatesSection key={updateManifestUrl} installedVersion={installedVersion} initialManifestUrl={updateManifestUrl} />
         <section className={cardClass}>
           <div className="space-y-3">
             <h2 className="font-heading text-base font-bold tracking-tight">Current Licence</h2>
@@ -90,6 +94,7 @@ export function LicenseSettingsForm({ license, providerControlsEnabled }: Props)
 
   return (
     <div className="space-y-6">
+      <LicenseUpdatesSection key={updateManifestUrl} installedVersion={installedVersion} initialManifestUrl={updateManifestUrl} />
       <section className={cardClass}>
         <h2 className="font-heading mb-2 text-base font-bold tracking-tight">Current Licence</h2>
         <p className="text-muted-foreground mb-4 text-sm">Licence details are controlled by the signed licence key.</p>

@@ -12,8 +12,10 @@
   "notes": [
     "Added licensed deployment update-check page.",
     "Added online update manifest checking.",
-    "Added latest version and release notes display.",
+    "Added installed version and latest version display.",
+    "Added release notes display.",
     "Added manual upgrade guidance for licensed deployments.",
+    "Added offline-friendly update check error handling.",
     "Added audit logging for update checks."
   ]
 }

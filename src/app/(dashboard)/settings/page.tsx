@@ -225,7 +225,7 @@ export default async function SettingsPage() {
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <h3 className="text-foreground text-sm font-semibold">Licence & Activation</h3>
+                  <h3 className="text-foreground text-sm font-semibold">Licence & Updates</h3>
                   {license ? (
                     <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-xs">
                       {getLicenseStatusLabel(license.status)}
@@ -233,7 +233,7 @@ export default async function SettingsPage() {
                   ) : null}
                 </div>
                 <p className="text-muted-foreground mt-1 text-sm">
-                  Manage trial status, licence key, expiry date, grace period, and activation.
+                  Manage trial status, licence key, expiry, activation, and approved update checks (manual upgrades only).
                 </p>
                 {license ? <p className="text-muted-foreground mt-1 text-xs">{licenseSummary}</p> : null}
               </div>
