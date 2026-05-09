@@ -4,7 +4,7 @@
   "releaseTag": "v0.12.0-beta",
   "releaseDate": "2026-05-09",
   "updateChannel": "beta",
-  "minimumSupportedVersion": "0.11.1-beta",
+  "minimumSupportedVersion": "0.11.0-beta",
   "requiresDatabaseMigration": true,
   "requiresDockerRebuild": true,
   "releaseUrl": "https://github.com/youdevon/local-db-hr/releases/tag/v0.12.0-beta",
