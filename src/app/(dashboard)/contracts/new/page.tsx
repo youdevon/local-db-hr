@@ -15,6 +15,7 @@ import {
 import { getRetirementAgePolicySettings } from "@/lib/retirement-policy-settings";
 import { getGratuitySettings } from "@/lib/gratuity-settings";
 import { getContractsForUi, getEmployeesForUi } from "@/lib/server/hr";
+import { listNoteMonitorOptionsForContracts } from "@/lib/server/note-monitor";
 
 export const metadata: Metadata = {
   title: "New Contract",
@@ -30,11 +31,12 @@ export default async function NewContractPage() {
     redirect(redirectTargetForDeniedWriteRoute(role, "/contracts"));
   }
 
-  const [employees, existingContracts, retirementPolicy, gratuitySettings] = await Promise.all([
+  const [employees, existingContracts, retirementPolicy, gratuitySettings, noteOptions] = await Promise.all([
     getEmployeesForUi(),
     getContractsForUi(),
     getRetirementAgePolicySettings(),
     getGratuitySettings(),
+    listNoteMonitorOptionsForContracts({ includeNonConfirmed: true }),
   ]);
   return (
     <div className="space-y-6">
@@ -55,6 +57,7 @@ export default async function NewContractPage() {
         existingContracts={existingContracts}
         retirementPolicy={retirementPolicy}
         gratuitySettings={gratuitySettings}
+        noteOptions={noteOptions}
       />
     </div>
   );

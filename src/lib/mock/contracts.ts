@@ -1,3 +1,5 @@
+import type { NoteTypeValue } from "@/lib/note-monitor/constants";
+
 export const CONTRACT_STATUS_OPTIONS = [
   "Draft",
   "Active",
@@ -43,10 +45,35 @@ export type ContractAllowance = {
   notes: string;
 };
 
+export type AuthorityReferenceMode = "note_monitor" | "manual";
+
+export type ContractNoteMonitorSnapshot = {
+  id: string;
+  noteType: string;
+  displayReference: string;
+  details: string;
+  status: string;
+  noteNumber: number;
+  noteYear: number;
+};
+
 export type ContractRecord = {
   id: string;
   employeeId: string;
   minuteNumber: string | null;
+  authorityNoteType: NoteTypeValue | null;
+  authorityReferenceMode: AuthorityReferenceMode | null;
+  authorityNoteMonitorRecordId: string | null;
+  authorityNoteManualReference: string | null;
+  authorityNoteMonitorRecordLabel: string | null;
+  authorityNoteMonitorDisplayReference: string | null;
+  authorityNoteMonitorDetails: string | null;
+  authorityNoteMonitorStatus: string | null;
+  authorityNoteMonitor?: ContractNoteMonitorSnapshot | null;
+  executiveCouncilNote?: ContractNoteMonitorSnapshot | null;
+  secretaryNote?: ContractNoteMonitorSnapshot | null;
+  legacyExecutiveCouncilNoteLabel: string | null;
+  legacySecretaryNoteLabel: string | null;
   contractNumber: string | null;
   startDate: string;
   endDate: string;

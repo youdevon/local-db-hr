@@ -8,9 +8,10 @@ import type {
   EmployeePositionHistoryRow,
   EmployeeRecord,
 } from "@/lib/mock/employees";
-import type { ContractListRow, ContractRecord } from "@/lib/mock/contracts";
+import type { ContractListRow, ContractNoteMonitorSnapshot, ContractRecord } from "@/lib/mock/contracts";
 import { formatCurrencyTTD } from "@/lib/mock/contracts";
 import { getFullName } from "@/lib/mock/employees";
+import { formatContractNoteLabel } from "@/lib/server/contract-note-links";
 
 function toIsoDate(value: Date | null | undefined): string {
   if (!value) return "";
@@ -34,8 +35,99 @@ type ContractWithEmployee = Prisma.contractsGetPayload<{
 }>;
 
 type ContractWithAllowances = Prisma.contractsGetPayload<{
-  include: { contract_allowances: true };
+  include: {
+    contract_allowances: true;
+    executive_council_note: true;
+    secretary_note: true;
+    authority_note_monitor_record: true;
+  };
 }>;
+
+function mapNoteMonitorSnapshot(
+  note: {
+    id: string;
+    note_type: string;
+    display_reference: string;
+    details: string;
+    status: string;
+    note_number: number;
+    note_year: number;
+  } | null | undefined,
+): ContractNoteMonitorSnapshot | null {
+  if (!note) return null;
+  return {
+    id: note.id,
+    noteType: note.note_type,
+    displayReference: note.display_reference,
+    details: note.details,
+    status: note.status,
+    noteNumber: note.note_number,
+    noteYear: note.note_year,
+  };
+}
+
+function mapContractRecord(row: ContractWithAllowances): ContractRecord {
+  const legacyExecutiveCouncilNoteLabel = row.executive_council_note
+    ? formatContractNoteLabel(row.executive_council_note)
+    : null;
+  const legacySecretaryNoteLabel = row.secretary_note ? formatContractNoteLabel(row.secretary_note) : null;
+  const authorityNoteMonitorRecordLabel = row.authority_note_monitor_record
+    ? formatContractNoteLabel(row.authority_note_monitor_record)
+    : null;
+
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    minuteNumber: row.minute_number?.trim() || null,
+    authorityNoteType: (row.authority_note_type as ContractRecord["authorityNoteType"]) ?? null,
+    authorityReferenceMode: row.authority_note_monitor_record_id
+      ? "note_monitor"
+      : row.authority_note_manual_reference?.trim()
+        ? "manual"
+        : null,
+    authorityNoteMonitorRecordId: row.authority_note_monitor_record_id ?? null,
+    authorityNoteManualReference: row.authority_note_manual_reference?.trim() || null,
+    authorityNoteMonitorRecordLabel,
+    authorityNoteMonitorDisplayReference: row.authority_note_monitor_record?.display_reference ?? null,
+    authorityNoteMonitorDetails: row.authority_note_monitor_record?.details ?? null,
+    authorityNoteMonitorStatus: row.authority_note_monitor_record?.status ?? null,
+    authorityNoteMonitor: mapNoteMonitorSnapshot(row.authority_note_monitor_record),
+    executiveCouncilNote: mapNoteMonitorSnapshot(row.executive_council_note),
+    secretaryNote: mapNoteMonitorSnapshot(row.secretary_note),
+    legacyExecutiveCouncilNoteLabel,
+    legacySecretaryNoteLabel,
+    contractNumber: row.contract_number ?? null,
+    startDate: toIsoDate(row.start_date),
+    endDate: toIsoDate(row.end_date),
+    dateReceived: toIsoDate(row.date_received),
+    dateSigned: toIsoDate(row.date_signed),
+    salary: Number(row.salary),
+    gratuity: Number(row.gratuity),
+    vacationLeaveEntitlement: Number(row.vacation_leave_entitlement),
+    sickLeaveEntitlement: Number(row.sick_leave_entitlement),
+    vacationRolloverAllowed: row.vacation_rollover_allowed,
+    sickRolloverAllowed: row.sick_rollover_allowed,
+    status: (row.status ?? "draft").replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase()) as ContractRecord["status"],
+    notes: row.notes ?? "",
+    retirementOverrideRequired: row.retirement_override_required ?? false,
+    retirementOverrideReason: row.retirement_override_reason ?? null,
+    retirementOverrideApprovalReference: row.retirement_override_approval_reference ?? null,
+    retirementCutoffDate: row.retirement_cutoff_date ? toIsoDate(row.retirement_cutoff_date) : null,
+    createdAt: toIsoDate(row.created_at),
+    updatedAt: toIsoDate(row.updated_at),
+    allowances: row.contract_allowances.map((a) => ({
+      aid: a.id,
+      allowanceType: (a.allowance_type ?? "") as ContractRecord["allowances"][number]["allowanceType"],
+      description: a.description ?? "",
+      amount: Number(a.amount),
+      frequency: (a.frequency ?? "") as ContractRecord["allowances"][number]["frequency"],
+      startDate: toIsoDate(a.start_date),
+      endDate: toIsoDate(a.end_date),
+      taxable: a.taxable,
+      notes: a.notes ?? "",
+    })),
+  };
+}
 
 function mapAddress(row: {
   id: string;
@@ -274,94 +366,36 @@ export async function getContractForUiById(id: string): Promise<ContractRecord |
   try {
     row = await prisma.contracts.findUnique({
       where: { id },
-      include: { contract_allowances: true },
+      include: {
+        contract_allowances: true,
+        executive_council_note: true,
+        secretary_note: true,
+        authority_note_monitor_record: true,
+      },
     });
   } catch {
     return null;
   }
   if (!row) return null;
-  return {
-    id: row.id,
-    employeeId: row.employee_id,
-    minuteNumber: row.minute_number?.trim() || null,
-    contractNumber: row.contract_number ?? null,
-    startDate: toIsoDate(row.start_date),
-    endDate: toIsoDate(row.end_date),
-    dateReceived: toIsoDate(row.date_received),
-    dateSigned: toIsoDate(row.date_signed),
-    salary: Number(row.salary),
-    gratuity: Number(row.gratuity),
-    vacationLeaveEntitlement: Number(row.vacation_leave_entitlement),
-    sickLeaveEntitlement: Number(row.sick_leave_entitlement),
-    vacationRolloverAllowed: row.vacation_rollover_allowed,
-    sickRolloverAllowed: row.sick_rollover_allowed,
-    status: (row.status ?? "draft").replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase()) as ContractRecord["status"],
-    notes: row.notes ?? "",
-    retirementOverrideRequired: row.retirement_override_required ?? false,
-    retirementOverrideReason: row.retirement_override_reason ?? null,
-    retirementOverrideApprovalReference: row.retirement_override_approval_reference ?? null,
-    retirementCutoffDate: row.retirement_cutoff_date ? toIsoDate(row.retirement_cutoff_date) : null,
-    createdAt: toIsoDate(row.created_at),
-    updatedAt: toIsoDate(row.updated_at),
-    allowances: row.contract_allowances.map((a) => ({
-      aid: a.id,
-      allowanceType: (a.allowance_type ?? "") as ContractRecord["allowances"][number]["allowanceType"],
-      description: a.description ?? "",
-      amount: Number(a.amount),
-      frequency: (a.frequency ?? "") as ContractRecord["allowances"][number]["frequency"],
-      startDate: toIsoDate(a.start_date),
-      endDate: toIsoDate(a.end_date),
-      taxable: a.taxable,
-      notes: a.notes ?? "",
-    })),
-  };
+  return mapContractRecord(row);
 }
 
 export async function getContractsForUi(): Promise<ContractRecord[]> {
   let rows: ContractWithAllowances[];
   try {
     rows = await prisma.contracts.findMany({
-      include: { contract_allowances: true },
+      include: {
+        contract_allowances: true,
+        executive_council_note: true,
+        secretary_note: true,
+        authority_note_monitor_record: true,
+      },
       orderBy: [{ created_at: "desc" }, { updated_at: "desc" }, { start_date: "desc" }],
     });
   } catch {
     return [];
   }
-  return rows.map((row) => ({
-    id: row.id,
-    employeeId: row.employee_id,
-    minuteNumber: row.minute_number?.trim() || null,
-    contractNumber: row.contract_number ?? null,
-    startDate: toIsoDate(row.start_date),
-    endDate: toIsoDate(row.end_date),
-    dateReceived: toIsoDate(row.date_received),
-    dateSigned: toIsoDate(row.date_signed),
-    salary: Number(row.salary),
-    gratuity: Number(row.gratuity),
-    vacationLeaveEntitlement: Number(row.vacation_leave_entitlement),
-    sickLeaveEntitlement: Number(row.sick_leave_entitlement),
-    vacationRolloverAllowed: row.vacation_rollover_allowed,
-    sickRolloverAllowed: row.sick_rollover_allowed,
-    status: (row.status ?? "draft").replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase()) as ContractRecord["status"],
-    notes: row.notes ?? "",
-    retirementOverrideRequired: row.retirement_override_required ?? false,
-    retirementOverrideReason: row.retirement_override_reason ?? null,
-    retirementOverrideApprovalReference: row.retirement_override_approval_reference ?? null,
-    retirementCutoffDate: row.retirement_cutoff_date ? toIsoDate(row.retirement_cutoff_date) : null,
-    createdAt: toIsoDate(row.created_at),
-    updatedAt: toIsoDate(row.updated_at),
-    allowances: row.contract_allowances.map((a) => ({
-      aid: a.id,
-      allowanceType: (a.allowance_type ?? "") as ContractRecord["allowances"][number]["allowanceType"],
-      description: a.description ?? "",
-      amount: Number(a.amount),
-      frequency: (a.frequency ?? "") as ContractRecord["allowances"][number]["frequency"],
-      startDate: toIsoDate(a.start_date),
-      endDate: toIsoDate(a.end_date),
-      taxable: a.taxable,
-      notes: a.notes ?? "",
-    })),
-  }));
+  return rows.map((row) => mapContractRecord(row));
 }
 
 export async function getDashboardCounts() {

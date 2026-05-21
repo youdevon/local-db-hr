@@ -74,7 +74,7 @@ export async function requirePermission(permission: Permission): Promise<{ userI
   if (!userId) {
     redirect(LOGIN_SESSION_EXPIRED_HREF);
   }
-  const mutatingPermissionPrefixes = ["employees.", "contracts.", "leave.", "users.", "documents.", "reports.", "settings."];
+  const mutatingPermissionPrefixes = ["employees.", "contracts.", "leave.", "noteMonitor.", "users.", "documents.", "reports.", "settings."];
   const isPotentialMutation = mutatingPermissionPrefixes.some((prefix) => permission.startsWith(prefix)) && !permission.endsWith(".view");
   if (isPotentialMutation) {
     const license = await getLicenseStatus();

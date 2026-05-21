@@ -8,7 +8,9 @@ import { SectionCard } from "@/components/section-card";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { exportAuditTrailToExcel } from "@/lib/export-excel";
+import { exportAuditExcelAction } from "@/actions/audit-export";
+import { slugifyExportFileName } from "@/lib/export-excel";
+import { downloadBase64File } from "@/lib/download-base64";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { compareDateIso, compareString } from "@/lib/sort-compare";
 import { cn } from "@/lib/utils";
@@ -109,6 +111,7 @@ export function CombinedAuditTrailClient({ rows }: { rows: CombinedAuditRow[] })
   const [filters, setFilters] = useState<AuditFilters>(defaultFilters);
   const [sortKey, setSortKey] = useState<CombinedSortKey | null>("createdAtIso");
   const [sortDir, setSortDir] = useState<"asc" | "desc" | null>("desc");
+  const [isExporting, setIsExporting] = useState(false);
   const topScrollRef = useRef<HTMLDivElement | null>(null);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const syncingRef = useRef<"top" | "table" | null>(null);
@@ -201,10 +204,28 @@ export function CombinedAuditTrailClient({ rows }: { rows: CombinedAuditRow[] })
     setFilters(defaultFilters);
   }
 
-  function handleExportExcel() {
+  function buildAuditExportFilters(): Record<string, string> {
+    const filtersUsed: Record<string, string> = {};
+    if (filters.search.trim()) filtersUsed.Search = filters.search.trim();
+    if (filters.auditType !== "all") {
+      filtersUsed["Audit Type"] = filters.auditType === "login" ? "Login" : "System";
+    }
+    if (filters.module !== "all") filtersUsed.Module = filters.module;
+    if (filters.auditAction !== "all") {
+      filtersUsed.Action = filters.auditAction.replace(/_/g, " ");
+    }
+    if (filters.success === "success") filtersUsed.Result = "Success";
+    if (filters.success === "failed") filtersUsed.Result = "Failed";
+    if (filters.dateFrom) filtersUsed["Date From"] = filters.dateFrom;
+    if (filters.dateTo) filtersUsed["Date To"] = filters.dateTo;
+    return filtersUsed;
+  }
+
+  async function handleExportExcel() {
+    setIsExporting(true);
     try {
-      exportAuditTrailToExcel(
-        filteredRows.map((row) => ({
+      const exportResult = await exportAuditExcelAction({
+        rows: filteredRows.map((row) => ({
           "Date / Time": row.createdAt || "—",
           "Audit Type": row.auditType || "—",
           "Who Attempted It": row.whoAttemptedIt || "Unknown",
@@ -217,10 +238,24 @@ export function CombinedAuditTrailClient({ rows }: { rows: CombinedAuditRow[] })
           "IP Address": row.ipAddress || "—",
           "Device Name": row.deviceName || "—",
         })),
-      );
+        filtersUsed: buildAuditExportFilters(),
+        fileName: slugifyExportFileName("Audit Trail"),
+      });
+      if (exportResult.success !== true) {
+        notifyError(exportResult.message);
+        return;
+      }
+      const contentBase64 = exportResult.contentBase64?.trim();
+      if (!contentBase64) {
+        notifyError("Export did not return a valid file. Please try again.");
+        return;
+      }
+      downloadBase64File(contentBase64, exportResult.fileName, exportResult.mimeType);
       notifySuccess("Audit trail exported successfully.");
     } catch {
       notifyError("Failed to export audit trail. Please try again.");
+    } finally {
+      setIsExporting(false);
     }
   }
 
@@ -258,8 +293,13 @@ export function CombinedAuditTrailClient({ rows }: { rows: CombinedAuditRow[] })
     <SectionCard
       title="Audit Trail"
       headerActions={
-        <Button type="button" className="h-10 rounded-md text-sm font-medium" onClick={handleExportExcel}>
-          Export Excel
+        <Button
+          type="button"
+          className="h-10 rounded-md text-sm font-medium"
+          onClick={handleExportExcel}
+          disabled={isExporting || filteredRows.length === 0}
+        >
+          {isExporting ? "Exporting..." : "Export Excel"}
         </Button>
       }
     >

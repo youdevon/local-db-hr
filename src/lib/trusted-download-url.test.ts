@@ -6,7 +6,7 @@ describe("isTrustedGithubReleaseDownloadUrl", () => {
   it("accepts github.com paths for youdevon/local-db-hr", () => {
     expect(
       isTrustedGithubReleaseDownloadUrl(
-        "https://github.com/youdevon/local-db-hr/archive/refs/tags/v0.13.1-beta.zip",
+        "https://github.com/youdevon/local-db-hr/archive/refs/tags/v0.13.0-beta.zip",
       ),
     ).toBe(true);
     expect(

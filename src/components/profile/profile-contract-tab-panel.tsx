@@ -30,7 +30,8 @@ export function ProfileContractTabPanel({ contract }: { contract: ProfileContrac
           <StatusBadge tone={toneForContractStatus(contract.statusLabel)}>{contract.statusLabel}</StatusBadge>
         </div>
         <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <Field label="Minute Number" value={contract.minuteNumber} />
+          <Field label="Authority Type" value={contract.authorityTypeLabel} />
+          <Field label="Authority Reference" value={contract.authorityReference} />
           <Field label="Contract Number" value={contract.contractNumber} />
           <Field label="Start Date" value={contract.startDate} />
           <Field label="End Date" value={contract.endDate} />

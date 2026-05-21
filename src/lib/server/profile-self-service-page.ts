@@ -7,6 +7,10 @@ import type { EmployeeQualificationsBundle } from "@/lib/server/employee-qualifi
 import { formatDateLabel } from "@/lib/leave";
 import { contractMonthsBetween, calculateGratuity, defaultGratuitySettings } from "@/lib/gratuity-settings";
 import { formatCurrencyTTD } from "@/lib/mock/contracts";
+import {
+  buildContractAuthorityDisplay,
+  contractAuthorityNoteInputFromRecord,
+} from "@/lib/contracts/contract-authority-display";
 import { resolveLeaveTransactionsContractStatus } from "@/lib/leave-selected-contract-status";
 import { prisma } from "@/lib/prisma";
 import type { ProfilePersonalInfoFields } from "@/lib/types/profile-personal-info";
@@ -25,6 +29,8 @@ export type ProfileContractForSelfService = {
   dropdownLabel: string;
   statusLabel: string;
   minuteNumber: string;
+  authorityTypeLabel: string;
+  authorityReference: string;
   contractNumber: string;
   startDate: string;
   endDate: string;
@@ -81,18 +87,73 @@ function formatHumanDurationFromDecimalMonths(decimalMonths: number): string {
   return parts.length > 0 ? parts.join(", ") : `${mWhole} months`;
 }
 
+function mapProfileNoteSnapshot(
+  note: {
+    id: string;
+    note_type: string;
+    display_reference: string;
+    details: string;
+    status: string;
+    note_number: number;
+    note_year: number;
+  } | null,
+) {
+  if (!note) return null;
+  return {
+    id: note.id,
+    noteType: note.note_type,
+    displayReference: note.display_reference,
+    details: note.details,
+    status: note.status,
+    noteNumber: note.note_number,
+    noteYear: note.note_year,
+  };
+}
+
 function buildContractRow(
   contract: {
     id: string;
     minute_number: string | null;
+    authority_note_type: string | null;
+    authority_note_monitor_record_id: string | null;
+    authority_note_manual_reference: string | null;
     contract_number: string | null;
     start_date: Date;
     end_date: Date;
-    salary: number;
-    gratuity: number;
-    vacation_leave_entitlement: number;
-    sick_leave_entitlement: number;
+    salary: Prisma.Decimal;
+    gratuity: Prisma.Decimal;
+    vacation_leave_entitlement: Prisma.Decimal;
+    sick_leave_entitlement: Prisma.Decimal;
     status: string | null;
+    executive_council_note_id: string | null;
+    secretary_note_id: string | null;
+    authority_note_monitor_record: {
+      id: string;
+      note_type: string;
+      display_reference: string;
+      details: string;
+      status: string;
+      note_number: number;
+      note_year: number;
+    } | null;
+    executive_council_note: {
+      id: string;
+      note_type: string;
+      display_reference: string;
+      details: string;
+      status: string;
+      note_number: number;
+      note_year: number;
+    } | null;
+    secretary_note: {
+      id: string;
+      note_type: string;
+      display_reference: string;
+      details: string;
+      status: string;
+      note_number: number;
+      note_year: number;
+    } | null;
   },
   gratuityRate: number,
   taxRate: number,
@@ -118,12 +179,27 @@ function buildContractRow(
 
   const vacationEnt = Number(contract.vacation_leave_entitlement ?? 0);
   const sickEnt = Number(contract.sick_leave_entitlement ?? 0);
+  const authority = buildContractAuthorityDisplay(
+    contractAuthorityNoteInputFromRecord({
+      authorityNoteType: contract.authority_note_type,
+      authorityNoteMonitorRecordId: contract.authority_note_monitor_record_id,
+      authorityNoteManualReference: contract.authority_note_manual_reference,
+      authorityNoteMonitor: mapProfileNoteSnapshot(contract.authority_note_monitor_record),
+      minuteNumber: contract.minute_number,
+      executiveCouncilNoteId: contract.executive_council_note_id,
+      secretaryNoteId: contract.secretary_note_id,
+      executiveCouncilNote: mapProfileNoteSnapshot(contract.executive_council_note),
+      secretaryNote: mapProfileNoteSnapshot(contract.secretary_note),
+    }),
+  );
 
   return {
     contractId: contract.id,
     dropdownLabel: `${resolved.label}: ${formatDateLabel(startIso)} – ${formatDateLabel(endIso)}`,
     statusLabel: resolved.label,
-    minuteNumber: contract.minute_number?.trim() || "—",
+    minuteNumber: contract.minute_number?.trim() || authority.authorityReference || "—",
+    authorityTypeLabel: authority.authorityTypeLabel || "—",
+    authorityReference: authority.authorityReference || "—",
     contractNumber: contract.contract_number?.trim() || "—",
     startDate: formatDateLabel(startIso),
     endDate: formatDateLabel(endIso),
@@ -232,45 +308,15 @@ export async function getProfileSelfServiceData(
   const employee = employeeRows[0];
   if (!employee) return base;
 
-  const contractRows = await prisma.$queryRaw<
-    Array<{
-      id: string;
-      minute_number: string | null;
-      contract_number: string | null;
-      start_date: Date;
-      end_date: Date;
-      salary: number;
-      gratuity: number;
-      vacation_leave_entitlement: number;
-      sick_leave_entitlement: number;
-      status: string | null;
-    }>
-  >(Prisma.sql`
-    SELECT
-      id::text AS id,
-      minute_number,
-      contract_number,
-      start_date,
-      end_date,
-      salary::numeric::float8 AS salary,
-      gratuity::numeric::float8 AS gratuity,
-      vacation_leave_entitlement::numeric::float8 AS vacation_leave_entitlement,
-      sick_leave_entitlement::numeric::float8 AS sick_leave_entitlement,
-      status
-    FROM public.contracts
-    WHERE employee_id = ${user.employee_id}::uuid
-    ORDER BY
-      CASE
-        WHEN CURRENT_DATE BETWEEN start_date AND end_date
-          AND COALESCE(lower(status), '') NOT IN ('cancelled', 'terminated', 'closed')
-          THEN 0
-        WHEN start_date > CURRENT_DATE THEN 1
-        WHEN end_date < CURRENT_DATE THEN 2
-        ELSE 3
-      END,
-      end_date DESC NULLS LAST,
-      start_date DESC
-  `);
+  const contractRows = await prisma.contracts.findMany({
+    where: { employee_id: user.employee_id },
+    include: {
+      authority_note_monitor_record: true,
+      executive_council_note: true,
+      secretary_note: true,
+    },
+    orderBy: [{ end_date: "desc" }, { start_date: "desc" }],
+  });
 
   const residentialAddress = await prisma.employee_addresses.findFirst({
     where: { employee_id: user.employee_id, address_type: "residential" },

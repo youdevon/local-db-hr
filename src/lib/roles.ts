@@ -90,6 +90,10 @@ export type Permission =
   | "contracts.edit"
   | "contracts.delete"
   | "contracts.export"
+  | "noteMonitor.view"
+  | "noteMonitor.create"
+  | "noteMonitor.edit"
+  | "noteMonitor.delete"
   | "leave.view"
   | "leave.create"
   | "leave.edit"
@@ -126,6 +130,10 @@ const ALL_PERMISSIONS: Permission[] = [
   "contracts.edit",
   "contracts.delete",
   "contracts.export",
+  "noteMonitor.view",
+  "noteMonitor.create",
+  "noteMonitor.edit",
+  "noteMonitor.delete",
   "leave.view",
   "leave.create",
   "leave.edit",
@@ -149,6 +157,7 @@ const ALL_PERMISSIONS: Permission[] = [
 const VIEWER_READ_ONLY_PERMISSIONS = new Set<Permission>([
   "employees.view",
   "contracts.view",
+  "noteMonitor.view",
   "leave.view",
   "documents.view",
   "reports.view",
@@ -168,6 +177,10 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Permission>> = {
     "contracts.create",
     "contracts.edit",
     "contracts.export",
+    "noteMonitor.view",
+    "noteMonitor.create",
+    "noteMonitor.edit",
+    "noteMonitor.delete",
     "leave.view",
     "leave.create",
     "leave.edit",
@@ -187,6 +200,10 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Permission>> = {
     "employees.edit",
     "contracts.view",
     "contracts.edit",
+    "noteMonitor.view",
+    "noteMonitor.create",
+    "noteMonitor.edit",
+    "noteMonitor.delete",
     "leave.view",
     "leave.create",
     "leave.edit",
@@ -200,6 +217,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Set<Permission>> = {
   viewer: new Set([
     "employees.view",
     "contracts.view",
+    "noteMonitor.view",
     "leave.view",
     "documents.view",
     "reports.view",
@@ -341,6 +359,9 @@ export function viewerWriteBlockedRedirectTarget(pathname: string): string | nul
   if (cm) return `/contracts/${cm[1]}?${q}`;
   if (path === "/leave/new") return `/leave?${q}`;
   if (/\/leave\/transactions\/[^/]+\/edit$/.test(path)) return `/leave?${q}`;
+  if (path === "/note-monitor/new") return `/note-monitor?${q}`;
+  const nm = path.match(/^\/note-monitor\/([^/]+)\/edit$/);
+  if (nm) return `/note-monitor/${nm[1]}?${q}`;
   return null;
 }
 
@@ -380,6 +401,13 @@ export function canAccessRoute(roleInput: string | null | undefined, pathname: s
     if (!canPerformAction(role, "leave.view")) return false;
     if (path === "/leave/new") return canPerformAction(role, "leave.create");
     if (/\/leave\/transactions\/[^/]+\/edit$/.test(path)) return canPerformAction(role, "leave.edit");
+    return true;
+  }
+
+  if (path.startsWith("/note-monitor")) {
+    if (!canPerformAction(role, "noteMonitor.view")) return false;
+    if (path === "/note-monitor/new") return canPerformAction(role, "noteMonitor.create");
+    if (/\/note-monitor\/[^/]+\/edit$/.test(path)) return canPerformAction(role, "noteMonitor.edit");
     return true;
   }
 

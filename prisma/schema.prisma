@@ -34,6 +34,11 @@ model User {
   qualifications_updated                                  employee_qualifications[]       @relation("QualificationUpdatedBy")
   qualification_groups_created                            employee_qualification_groups[] @relation("QualificationGroupCreatedBy")
   qualification_groups_updated                            employee_qualification_groups[] @relation("QualificationGroupUpdatedBy")
+  note_monitor_records_created                            note_monitor_records[]          @relation("NoteMonitorCreatedBy")
+  note_monitor_records_updated                            note_monitor_records[]          @relation("NoteMonitorUpdatedBy")
+  note_monitor_records_deleted                            note_monitor_records[]          @relation("NoteMonitorDeletedBy")
+  note_monitor_history                                    note_monitor_history[]          @relation("NoteMonitorHistoryEditedBy")
+  note_number_sequences_updated                           note_number_sequences[]         @relation("NoteNumberSequenceUpdatedBy")
 
   @@index([email], map: "idx_users_email")
   @@index([is_active], map: "idx_users_is_active")
@@ -179,12 +184,24 @@ model contracts {
   retirement_override_reason             String?
   retirement_override_approval_reference String?
   retirement_cutoff_date                 DateTime?             @db.Date
+  executive_council_note_id              String?               @db.Uuid
+  secretary_note_id                      String?               @db.Uuid
+  authority_note_type                    String?
+  authority_note_monitor_record_id       String?               @db.Uuid
+  authority_note_manual_reference        String?
   contract_allowances                    contract_allowances[]
   employees                              employees             @relation(fields: [employee_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  executive_council_note                 note_monitor_records? @relation("ContractExecutiveCouncilNote", fields: [executive_council_note_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  secretary_note                         note_monitor_records? @relation("ContractSecretaryNote", fields: [secretary_note_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  authority_note_monitor_record          note_monitor_records? @relation("ContractAuthorityNote", fields: [authority_note_monitor_record_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
   leave_transactions                     leave_transactions[]
   leave_year_balances                    leave_year_balances[]
 
   @@index([employee_id], map: "idx_contracts_employee_id")
+  @@index([executive_council_note_id], map: "idx_contracts_executive_council_note_id")
+  @@index([secretary_note_id], map: "idx_contracts_secretary_note_id")
+  @@index([authority_note_monitor_record_id], map: "idx_contracts_authority_note_monitor_record_id")
+  @@index([authority_note_type], map: "idx_contracts_authority_note_type")
   @@index([employee_id, start_date, end_date], map: "idx_contracts_employee_period")
   @@index([end_date], map: "idx_contracts_end_date")
   @@index([start_date], map: "idx_contracts_start_date")
@@ -542,6 +559,77 @@ model leave_year_balances {
   @@index([year_start_date, year_end_date], map: "idx_leave_year_balances_year_dates")
   @@index([employee_id, contract_id], map: "idx_leave_year_balances_employee_contract")
   @@index([contract_year_number], map: "idx_leave_year_balances_year")
+}
+
+/// Executive Council / Secretary note and minute tracking (pre-contract workflow).
+model note_monitor_records {
+  id                                   String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  note_year                            Int
+  note_number                          Int
+  note_type                            String
+  display_reference                    String
+  note_preparation_date                DateTime               @db.Date
+  details                              String
+  date_returned_from_secretary         DateTime?              @db.Date
+  date_sent_to_executive_council       DateTime?              @db.Date
+  date_received_from_executive_council DateTime?              @db.Date
+  due_date                             DateTime?              @db.Date
+  status                               String                 @default("pending")
+  created_at                           DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at                           DateTime               @default(now()) @db.Timestamptz(6)
+  created_by                           String?                @db.Uuid
+  updated_by                           String?                @db.Uuid
+  deleted_at                           DateTime?              @map("deleted_at") @db.Timestamptz(6)
+  deleted_by                           String?                @map("deleted_by") @db.Uuid
+  deleted_reason                       String?                @map("deleted_reason")
+  contracts_executive_council          contracts[]            @relation("ContractExecutiveCouncilNote")
+  contracts_secretary                  contracts[]            @relation("ContractSecretaryNote")
+  contracts_authority_note             contracts[]            @relation("ContractAuthorityNote")
+  note_monitor_history                 note_monitor_history[]
+  created_by_user                      User?                  @relation("NoteMonitorCreatedBy", fields: [created_by], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  updated_by_user                      User?                  @relation("NoteMonitorUpdatedBy", fields: [updated_by], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  deleted_by_user                      User?                  @relation("NoteMonitorDeletedBy", fields: [deleted_by], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@unique([note_year, note_number], map: "note_monitor_records_year_number_unique")
+  @@index([deleted_at], map: "idx_note_monitor_records_deleted_at")
+  @@index([note_year], map: "idx_note_monitor_records_note_year")
+  @@index([note_type], map: "idx_note_monitor_records_note_type")
+  @@index([status], map: "idx_note_monitor_records_status")
+  @@index([due_date], map: "idx_note_monitor_records_due_date")
+  @@index([display_reference], map: "idx_note_monitor_records_display_reference")
+  @@index([created_at(sort: Desc)], map: "idx_note_monitor_records_created_at")
+}
+
+/// Shared yearly note number sequence (safe concurrent allocation).
+model note_number_sequences {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  note_year         Int      @unique(map: "note_number_sequences_year_unique")
+  next_number       Int      @default(1)
+  auto_reset_yearly Boolean  @default(true)
+  updated_at        DateTime @default(now()) @db.Timestamptz(6)
+  updated_by        String?  @db.Uuid
+  updated_by_user   User?    @relation("NoteNumberSequenceUpdatedBy", fields: [updated_by], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([note_year], map: "idx_note_number_sequences_note_year")
+}
+
+/// Field-level edit history for Note Monitor records (detail view audit trail).
+model note_monitor_history {
+  id                     String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  note_monitor_record_id String               @db.Uuid
+  action                 String
+  field_name             String?
+  field_label            String?
+  old_value              String?
+  new_value              String?
+  edited_by              String?              @db.Uuid
+  edited_by_name         String?
+  edited_at              DateTime             @default(now()) @db.Timestamptz(6)
+  note_monitor_record    note_monitor_records @relation(fields: [note_monitor_record_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  edited_by_user         User?                @relation("NoteMonitorHistoryEditedBy", fields: [edited_by], references: [id], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([note_monitor_record_id], map: "idx_note_monitor_history_record_id")
+  @@index([edited_at(sort: Desc)], map: "idx_note_monitor_history_edited_at")
 }
 
 model email_notification_logs {

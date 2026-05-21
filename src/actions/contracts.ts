@@ -15,6 +15,12 @@ import {
   doesContractExceedRetirementCutoff,
 } from "@/lib/retirement-policy";
 import { getRetirementAgePolicySettings } from "@/lib/retirement-policy-settings";
+import {
+  formatAuthorityReferenceForAudit,
+  formatContractNoteLabel,
+  resolveAuthorityNoteReference,
+} from "@/lib/server/contract-note-links";
+import { formatNoteTypeLabel } from "@/lib/note-monitor/constants";
 import { contractFormSchema, type ContractFormValues } from "@/lib/validators/contract-form";
 
 type ContractActionResult =
@@ -114,6 +120,84 @@ function areAllowanceRowsEqual(
   );
 }
 
+function authorityFieldsFromForm(data: ContractFormValues) {
+  return {
+    authorityNoteType: data.authorityNoteType?.trim() || "",
+    authorityReferenceMode: data.authorityReferenceMode as "note_monitor" | "manual",
+    authorityNoteMonitorRecordId: data.authorityNoteMonitorRecordId?.trim() || null,
+    authorityNoteManualReference: data.authorityNoteManualReference?.trim() || null,
+  };
+}
+
+function pushAuthorityAuditChanges(
+  changes: AuditChange[],
+  before: {
+    authorityNoteType: string | null;
+    authorityNoteMonitorRecordId: string | null;
+    authorityNoteManualReference: string | null;
+    monitorLabel: string | null;
+  },
+  after: {
+    authorityNoteType: string;
+    authorityNoteMonitorRecordId: string | null;
+    authorityNoteManualReference: string | null;
+    monitorLabel: string | null;
+  },
+) {
+  if ((before.authorityNoteType ?? null) !== (after.authorityNoteType ?? null)) {
+    changes.push({
+      field: "authority_note_type",
+      label: "Authority Type",
+      type: "changed",
+      before: before.authorityNoteType ? formatNoteTypeLabel(before.authorityNoteType) : null,
+      after: formatNoteTypeLabel(after.authorityNoteType),
+      format: "text",
+    });
+  }
+
+  const beforeRef = formatAuthorityReferenceForAudit({
+    authorityNoteMonitorRecordId: before.authorityNoteMonitorRecordId,
+    authorityNoteManualReference: before.authorityNoteManualReference,
+    monitorLabel: before.monitorLabel,
+  });
+  const afterRef = formatAuthorityReferenceForAudit({
+    authorityNoteMonitorRecordId: after.authorityNoteMonitorRecordId,
+    authorityNoteManualReference: after.authorityNoteManualReference,
+    monitorLabel: after.monitorLabel,
+  });
+
+  const beforeIsManual = Boolean(before.authorityNoteManualReference?.trim());
+  const afterIsManual = Boolean(after.authorityNoteManualReference?.trim());
+  const manualOnlyChange =
+    (before.authorityNoteType ?? null) === (after.authorityNoteType ?? null) &&
+    beforeIsManual &&
+    afterIsManual &&
+    (before.authorityNoteManualReference ?? null) !== (after.authorityNoteManualReference ?? null);
+
+  if (manualOnlyChange) {
+    changes.push({
+      field: "authority_note_manual_reference",
+      label: "Manual Authority Reference",
+      type: "changed",
+      before: before.authorityNoteManualReference,
+      after: after.authorityNoteManualReference,
+      format: "text",
+    });
+    return;
+  }
+
+  if (beforeRef !== afterRef && (beforeRef || afterRef)) {
+    changes.push({
+      field: "authority_reference",
+      label: "Authority Reference",
+      type: "changed",
+      before: beforeRef,
+      after: afterRef,
+      format: "text",
+    });
+  }
+}
+
 function buildOverlapWhere(employeeId: string, startDate: Date, endDate: Date, excludeContractId?: string) {
   return {
     employee_id: employeeId,
@@ -128,7 +212,10 @@ function parseContractInput(input: ContractFormValues): {
   ok: true;
   data: {
     employeeId: string;
-    minuteNumber: string | null;
+    authorityNoteType: string;
+    authorityReferenceMode: "note_monitor" | "manual";
+    authorityNoteMonitorRecordId: string | null;
+    authorityNoteManualReference: string | null;
     contractNumber: string | null;
     startDate: Date;
     endDate: Date;
@@ -205,7 +292,7 @@ function parseContractInput(input: ContractFormValues): {
       ok: true,
       data: {
         employeeId: data.employeeId,
-        minuteNumber: data.minuteNumber?.trim() || null,
+        ...authorityFieldsFromForm(data),
         contractNumber: contractNumber || null,
         startDate,
         endDate,
@@ -237,7 +324,7 @@ function parseContractInput(input: ContractFormValues): {
       ok: true,
       data: {
         employeeId: data.employeeId,
-        minuteNumber: data.minuteNumber?.trim() || null,
+        ...authorityFieldsFromForm(data),
         contractNumber: contractNumber || null,
         startDate,
         endDate,
@@ -303,7 +390,7 @@ function parseContractInput(input: ContractFormValues): {
     ok: true,
     data: {
       employeeId: data.employeeId,
-      minuteNumber: data.minuteNumber?.trim() || null,
+      ...authorityFieldsFromForm(data),
       contractNumber: contractNumber || null,
       startDate,
       endDate,
@@ -354,6 +441,29 @@ export async function createContractAction(input: ContractFormValues): Promise<C
   }
 
   const { data } = parsedInput;
+
+  const resolvedAuthority = await resolveAuthorityNoteReference({
+    authorityNoteType: data.authorityNoteType,
+    authorityReferenceMode: data.authorityReferenceMode,
+    authorityNoteMonitorRecordId: data.authorityNoteMonitorRecordId,
+    authorityNoteManualReference: data.authorityNoteManualReference,
+  });
+  if (!resolvedAuthority.ok) {
+    await createSystemAuditLog({
+      actorUserId,
+      module: "Contracts",
+      action: "created_contract",
+      targetType: "contract",
+      success: false,
+      failureReason: resolvedAuthority.message,
+      ipAddress: ip,
+      deviceName: deviceLabel,
+      userAgent,
+    });
+    return { success: false, message: resolvedAuthority.message };
+  }
+
+  const resolved = resolvedAuthority.data;
   const retirementPolicy = await getRetirementAgePolicySettings();
   const targetLabel = data.contractNumber
     ? `Contract: ${data.contractNumber}`
@@ -413,7 +523,12 @@ export async function createContractAction(input: ContractFormValues): Promise<C
       const contract = await tx.contracts.create({
         data: {
           employee_id: data.employeeId,
-          minute_number: data.minuteNumber,
+          minute_number: resolved.minuteNumber,
+          authority_note_type: resolved.authorityNoteType,
+          authority_note_monitor_record_id: resolved.authorityNoteMonitorRecordId,
+          authority_note_manual_reference: resolved.authorityNoteManualReference,
+          executive_council_note_id: resolved.executiveCouncilNoteId,
+          secretary_note_id: resolved.secretaryNoteId,
           contract_number: data.contractNumber,
           start_date: data.startDate,
           end_date: data.endDate,
@@ -468,6 +583,7 @@ export async function createContractAction(input: ContractFormValues): Promise<C
     revalidatePath("/contracts/directory");
     revalidatePath(`/contracts/${created.contract.id}`);
     revalidatePath(`/employees/${data.employeeId}`);
+    revalidatePath("/note-monitor");
     revalidatePath("/");
     await syncLeaveYearBalances(data.employeeId, created.contract.id, actorUserId);
     await createSystemAuditLog({
@@ -576,6 +692,30 @@ export async function updateContractAction(
   }
 
   const { data } = parsedInput;
+
+  const resolvedAuthority = await resolveAuthorityNoteReference({
+    authorityNoteType: data.authorityNoteType,
+    authorityReferenceMode: data.authorityReferenceMode,
+    authorityNoteMonitorRecordId: data.authorityNoteMonitorRecordId,
+    authorityNoteManualReference: data.authorityNoteManualReference,
+  });
+  if (!resolvedAuthority.ok) {
+    await createSystemAuditLog({
+      actorUserId,
+      module: "Contracts",
+      action: "edited_contract",
+      targetType: "contract",
+      targetId: contractId,
+      success: false,
+      failureReason: resolvedAuthority.message,
+      ipAddress: ip,
+      deviceName: deviceLabel,
+      userAgent,
+    });
+    return { success: false, message: resolvedAuthority.message };
+  }
+
+  const resolved = resolvedAuthority.data;
   const retirementPolicy = await getRetirementAgePolicySettings();
   const targetLabel = data.contractNumber
     ? `Contract: ${data.contractNumber}`
@@ -588,6 +728,20 @@ export async function updateContractAction(
         select: {
           id: true,
           minute_number: true,
+          authority_note_type: true,
+          authority_note_monitor_record_id: true,
+          authority_note_manual_reference: true,
+          executive_council_note_id: true,
+          secretary_note_id: true,
+          authority_note_monitor_record: {
+            select: {
+              note_type: true,
+              note_number: true,
+              note_year: true,
+              details: true,
+              status: true,
+            },
+          },
           contract_number: true,
           start_date: true,
           end_date: true,
@@ -677,16 +831,23 @@ export async function updateContractAction(
         dateReceived: existing.date_received ? existing.date_received.toISOString().slice(0, 10) : null,
         dateSigned: existing.date_signed ? existing.date_signed.toISOString().slice(0, 10) : null,
       };
-      if ((existing.minute_number ?? null) !== (data.minuteNumber ?? null)) {
-        changes.push({
-          field: "minute_number",
-          label: "Minute Number",
-          type: "changed",
-          before: existing.minute_number,
-          after: data.minuteNumber,
-          format: "text",
-        });
-      }
+      pushAuthorityAuditChanges(
+        changes,
+        {
+          authorityNoteType: existing.authority_note_type,
+          authorityNoteMonitorRecordId: existing.authority_note_monitor_record_id,
+          authorityNoteManualReference: existing.authority_note_manual_reference,
+          monitorLabel: existing.authority_note_monitor_record
+            ? formatContractNoteLabel(existing.authority_note_monitor_record)
+            : null,
+        },
+        {
+          authorityNoteType: resolved.authorityNoteType,
+          authorityNoteMonitorRecordId: resolved.authorityNoteMonitorRecordId,
+          authorityNoteManualReference: resolved.authorityNoteManualReference,
+          monitorLabel: resolved.monitorAuditLabel,
+        },
+      );
       if ((existing.contract_number ?? null) !== (data.contractNumber ?? null)) {
         changes.push({
           field: "contract_number",
@@ -802,7 +963,12 @@ export async function updateContractAction(
         where: { id: contractId },
         data: {
           employee_id: data.employeeId,
-          minute_number: data.minuteNumber,
+          minute_number: resolved.minuteNumber,
+          authority_note_type: resolved.authorityNoteType,
+          authority_note_monitor_record_id: resolved.authorityNoteMonitorRecordId,
+          authority_note_manual_reference: resolved.authorityNoteManualReference,
+          executive_council_note_id: resolved.executiveCouncilNoteId,
+          secretary_note_id: resolved.secretaryNoteId,
           contract_number: data.contractNumber,
           start_date: data.startDate,
           end_date: data.endDate,
@@ -944,6 +1110,7 @@ export async function updateContractAction(
     revalidatePath(`/contracts/${updated.contract.id}`);
     revalidatePath(`/contracts/${updated.contract.id}/edit`);
     revalidatePath(`/employees/${data.employeeId}`);
+    revalidatePath("/note-monitor");
     revalidatePath("/");
     await syncLeaveYearBalances(data.employeeId, updated.contract.id, actorUserId);
     await createSystemAuditLog({

@@ -9,6 +9,9 @@ import { useRouter } from "next/navigation";
 
 import { createContractAction, deleteContractAction, updateContractAction } from "@/actions/contracts";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { AuthorityNoteFields } from "@/components/note-monitor/authority-note-reference-field";
+import { contractAuthorityNoteDefaults } from "@/lib/contracts/authority-note-form";
+import type { NoteTypeValue } from "@/lib/note-monitor/constants";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -39,6 +42,7 @@ import {
   doesContractExceedRetirementCutoff,
   type RetirementAgePolicy,
 } from "@/lib/retirement-policy";
+import type { NoteMonitorDropdownOption } from "@/lib/server/note-monitor";
 
 const floatingCard =
   "rounded-xl border border-border bg-card p-5 shadow-[0_6px_18px_rgba(15,23,42,0.08)] dark:shadow-[0_6px_18px_rgba(0,0,0,0.35)]";
@@ -109,7 +113,7 @@ function toDefaultValues(contract?: ContractRecord): ContractFormValues {
   if (contract) {
       return {
         employeeId: contract.employeeId,
-        minuteNumber: contract.minuteNumber ?? "",
+        ...contractAuthorityNoteDefaults(contract),
         noAssignedContractNumber: contract.contractNumber === null || contract.contractNumber.startsWith("UNASSIGNED-"),
         contractNumber:
           contract.contractNumber && !contract.contractNumber.startsWith("UNASSIGNED-")
@@ -145,7 +149,7 @@ function toDefaultValues(contract?: ContractRecord): ContractFormValues {
   }
   return {
     employeeId: "",
-    minuteNumber: "",
+    ...contractAuthorityNoteDefaults(),
     noAssignedContractNumber: false,
     contractNumber: "",
     durationPreset: "12",
@@ -180,6 +184,7 @@ export function ContractForm({
   initialContract,
   gratuitySettings: initialGratuitySettings = defaultGratuitySettings,
   canDelete = false,
+  noteOptions,
 }: {
   mode: "create" | "edit";
   contractId?: string;
@@ -189,6 +194,7 @@ export function ContractForm({
   initialContract?: ContractRecord;
   gratuitySettings?: GratuityCalculationSettings;
   canDelete?: boolean;
+  noteOptions: NoteMonitorDropdownOption[];
 }) {
   const router = useRouter();
   const [employeeQuery, setEmployeeQuery] = useState("");
@@ -214,6 +220,10 @@ export function ContractForm({
     setValue("allowancesChanged", true, { shouldDirty: true });
 
   const employeeId = watch("employeeId");
+  const authorityNoteType = watch("authorityNoteType");
+  const authorityReferenceMode = watch("authorityReferenceMode");
+  const authorityNoteMonitorRecordId = watch("authorityNoteMonitorRecordId");
+  const authorityNoteManualReference = watch("authorityNoteManualReference");
   const noAssignedContractNumber = watch("noAssignedContractNumber");
   const durationPreset = watch("durationPreset");
   const customDurationMonths = watch("customDurationMonths");
@@ -553,14 +563,76 @@ export function ContractForm({
       <section className={cn(floatingCard, "space-y-6")}>
         <h2 className="font-heading text-base font-bold tracking-tight">Contract Details</h2>
         <div className="space-y-6">
+          <div className="space-y-4 rounded-xl border border-border bg-muted/10 p-4">
+            <div>
+              <h3 className="text-sm font-semibold">Authority note</h3>
+              <p className="text-muted-foreground mt-1 text-xs">
+                Select the authority note type and link a Note Monitor record or enter a legacy manual reference.
+              </p>
+            </div>
+            <AuthorityNoteFields
+              noteType={(authorityNoteType as NoteTypeValue | "") ?? ""}
+              noteTypeError={errors.authorityNoteType?.message}
+              onNoteTypeChange={(value) => {
+                setValue("authorityNoteType", value, { shouldDirty: true, shouldValidate: true });
+                setValue("authorityNoteMonitorRecordId", "", { shouldDirty: true, shouldValidate: true });
+                if (!value) {
+                  setValue("authorityReferenceMode", "", { shouldDirty: true, shouldValidate: true });
+                } else if (!authorityReferenceMode) {
+                  setValue("authorityReferenceMode", "note_monitor", {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  });
+                }
+              }}
+              options={noteOptions}
+              referenceMode={
+                authorityReferenceMode === "manual"
+                  ? "manual"
+                  : authorityReferenceMode === "note_monitor"
+                    ? "note_monitor"
+                    : ""
+              }
+              onReferenceModeChange={(value) => {
+                setValue("authorityReferenceMode", value, { shouldDirty: true, shouldValidate: true });
+                if (value === "manual") {
+                  setValue("authorityNoteMonitorRecordId", "", { shouldDirty: true, shouldValidate: true });
+                } else {
+                  setValue("authorityNoteManualReference", "", { shouldDirty: true, shouldValidate: true });
+                }
+              }}
+              monitorRecordId={authorityNoteMonitorRecordId ?? ""}
+              onMonitorRecordIdChange={(value) => {
+                setValue("authorityNoteMonitorRecordId", value, { shouldDirty: true, shouldValidate: true });
+                if (value) {
+                  setValue("authorityReferenceMode", "note_monitor", {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  });
+                  setValue("authorityNoteManualReference", "", { shouldDirty: true, shouldValidate: true });
+                }
+              }}
+              manualReference={authorityNoteManualReference ?? ""}
+              onManualReferenceChange={(value) => {
+                setValue("authorityNoteManualReference", value, { shouldDirty: true, shouldValidate: true });
+                if (value.trim()) {
+                  setValue("authorityReferenceMode", "manual", {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  });
+                  setValue("authorityNoteMonitorRecordId", "", { shouldDirty: true, shouldValidate: true });
+                }
+              }}
+              monitorError={errors.authorityNoteMonitorRecordId?.message}
+              manualError={errors.authorityNoteManualReference?.message}
+            />
+            <p className="text-muted-foreground text-xs">
+              Note Monitor records are filtered by note type. Status is shown in each dropdown label. Use legacy/manual
+              entry when the reference is not in Note Monitor.
+            </p>
+          </div>
+
           <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Minute Number" error={errors.minuteNumber?.message}>
-              <Input
-                className="rounded-md"
-                placeholder="Enter Executive Council or Secretary minute number"
-                {...register("minuteNumber")}
-              />
-            </Field>
             <Field
               label="Contract Number"
               required={!noAssignedContractNumber}

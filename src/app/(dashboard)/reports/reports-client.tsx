@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { BarChart3, Download, Printer, Search } from "lucide-react";
 
-import { logReportExportAction, runReportAction } from "./actions";
+import { exportReportExcelAction, logReportExportAction, runReportAction } from "./actions";
 import { DataTableColumnHeader } from "@/components/data-table-column-header";
 import { EmployeeCombobox } from "@/components/employee-combobox";
 import { EmptyState } from "@/components/empty-state";
@@ -14,6 +14,8 @@ import { SectionCard } from "@/components/section-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DataTable } from "@/components/data-table";
+import { slugifyExportFileName } from "@/lib/export-excel";
+import { downloadBase64File } from "@/lib/download-base64";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import type { ReportDefinition, ReportResult } from "@/lib/reports/report-definitions";
 import { cn } from "@/lib/utils";
@@ -106,6 +108,63 @@ function requiredForFilter(report: ReportDefinition, key: string, filters: Filte
   return false;
 }
 
+function buildExportFilterDisplay(
+  report: ReportDefinition,
+  activeFilters: FilterMap,
+  options: ReportsClientProps["filterOptions"],
+): Record<string, string> {
+  const result: Record<string, string> = {};
+
+  for (const filterDef of report.filters) {
+    const raw = activeFilters[filterDef.key] ?? "";
+    if (!raw || raw.toLowerCase() === "all") continue;
+
+    if (filterDef.key === "employeeId") {
+      const employee = options.employees.find((item) => item.value === raw);
+      result[filterDef.label] = employee?.label ?? employee?.fullName ?? "Selected employee";
+      continue;
+    }
+
+    if (filterDef.type === "select") {
+      const selectOptions =
+        filterDef.key === "department"
+          ? options.departments
+          : filterDef.key === "position"
+            ? options.positions
+            : filterDef.key === "nationality"
+              ? options.nationalities
+              : filterDef.key === "gender"
+                ? options.genders
+                : filterDef.key === "contractStatus"
+                  ? options.contractStatuses
+                  : filterDef.key === "leaveType"
+                    ? options.leaveTypes
+                    : filterDef.key === "leaveStatus"
+                      ? options.leaveStatuses
+                      : filterDef.key === "role"
+                        ? options.roles
+                        : filterDef.key === "linkedEmployeeStatus"
+                          ? options.linkedEmployeeStatuses
+                          : filterDef.key === "success"
+                            ? options.successOptions
+                            : filterDef.key === "auditType"
+                              ? options.auditTypes
+                              : filterDef.key === "module"
+                                ? options.auditModules
+                                : filterDef.key === "ageCondition"
+                                  ? options.ageConditions
+                                  : filterDef.options ?? [];
+      const match = selectOptions.find((item) => item.value === raw);
+      result[filterDef.label] = match?.label ?? raw;
+      continue;
+    }
+
+    result[filterDef.label] = raw;
+  }
+
+  return result;
+}
+
 export function ReportsClient({
   categories,
   reports,
@@ -181,14 +240,26 @@ export function ReportsClient({
     }
     setIsExporting(true);
     try {
+      const exportResult = await exportReportExcelAction({
+        title: result.title,
+        generatedAt: result.generatedAt,
+        filtersApplied: buildExportFilterDisplay(selectedReport, filters, filterOptions),
+        rows: result.rows,
+        columns: result.columns,
+        fileName: slugifyExportFileName(selectedReport.label),
+        includeMetadata: includeExportMetadata,
+      });
+      if (exportResult.success !== true) {
+        notifyError(exportResult.message);
+        return;
+      }
+      const contentBase64 = exportResult.contentBase64?.trim();
+      if (!contentBase64) {
+        notifyError("Export did not return a valid file. Please try again.");
+        return;
+      }
+      downloadBase64File(contentBase64, exportResult.fileName, exportResult.mimeType);
       await logReportExportAction(selectedReport.id, exportReason);
-      const XLSX = await import("xlsx");
-      const worksheetRows = result.rows.length ? result.rows : [{ Notice: "No records found for the selected filters." }];
-      const ws = XLSX.utils.json_to_sheet(worksheetRows);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Report");
-      const dateStamp = new Date().toISOString().slice(0, 10);
-      XLSX.writeFile(wb, `${selectedReport.id}-${dateStamp}.xlsx`);
       notifySuccess("Report exported successfully.");
     } catch {
       notifyError("Failed to export report. Please try again.");

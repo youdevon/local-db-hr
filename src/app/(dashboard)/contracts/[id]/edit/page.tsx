@@ -15,6 +15,7 @@ import {
 import { getRetirementAgePolicySettings } from "@/lib/retirement-policy-settings";
 import { getGratuitySettings } from "@/lib/gratuity-settings";
 import { getContractForUiById, getContractsForUi, getEmployeesForUi } from "@/lib/server/hr";
+import { listNoteMonitorOptionsForContracts } from "@/lib/server/note-monitor";
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -42,12 +43,13 @@ export default async function EditContractPage({ params }: Props) {
     redirect(redirectTargetForDeniedWriteRoute(role, `/contracts/${id}`));
   }
 
-  const [contract, employees, existingContracts, retirementPolicy, gratuitySettings] = await Promise.all([
+  const [contract, employees, existingContracts, retirementPolicy, gratuitySettings, noteOptions] = await Promise.all([
     getContractForUiById(id),
     getEmployeesForUi(),
     getContractsForUi(),
     getRetirementAgePolicySettings(),
     getGratuitySettings(),
+    listNoteMonitorOptionsForContracts({ includeNonConfirmed: true }),
   ]);
   if (!contract) notFound();
   return (
@@ -73,6 +75,7 @@ export default async function EditContractPage({ params }: Props) {
         gratuitySettings={gratuitySettings}
         initialContract={contract}
         canDelete={canDeleteContract}
+        noteOptions={noteOptions}
       />
     </div>
   );

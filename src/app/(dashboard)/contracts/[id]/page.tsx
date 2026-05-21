@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { ContractAllowancesTable } from "@/components/contracts/contract-allowances-table";
+import { ContractAuthoritySection } from "@/components/contracts/contract-authority-section";
 import { ViewOnlyErrorToast } from "@/components/employees/view-only-error-toast";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -86,7 +87,6 @@ export default async function ContractDetailPage({ params }: Props) {
     contract.contractNumber && !contract.contractNumber.startsWith("UNASSIGNED-")
       ? contract.contractNumber
       : "No assigned number";
-  const minuteNumberLabel = contract.minuteNumber?.trim() || "—";
   const durationMonths = contractMonthsBetween(contract.startDate, contract.endDate);
   const gratuityBreakdown = calculateGratuity({
     monthlySalary: contract.salary,
@@ -140,10 +140,6 @@ export default async function ContractDetailPage({ params }: Props) {
             </dd>
           </div>
           <div>
-            <dt className="text-muted-foreground">Minute #</dt>
-            <dd className="text-foreground font-medium">{minuteNumberLabel}</dd>
-          </div>
-          <div>
             <dt className="text-muted-foreground">Contract number</dt>
             <dd className="text-foreground font-medium">{contractNumberLabel}</dd>
           </div>
@@ -175,6 +171,8 @@ export default async function ContractDetailPage({ params }: Props) {
           </div>
         </dl>
       </SectionCard>
+
+      <ContractAuthoritySection contract={contract} />
 
       <div className="grid gap-6 xl:grid-cols-2">
         <SectionCard title="Compensation">

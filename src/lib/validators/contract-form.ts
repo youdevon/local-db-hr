@@ -6,10 +6,12 @@ import {
   CONTRACT_STATUS_OPTIONS,
 } from "@/lib/mock/contracts";
 import { contractEndDateMatchesPeriod } from "@/lib/contract-dates";
+import { NOTE_TYPE_VALUES } from "@/lib/note-monitor/constants";
 
 const allowanceTypeTuple = ALLOWANCE_TYPE_OPTIONS as unknown as [string, ...string[]];
 const allowanceFrequencyTuple = ALLOWANCE_FREQUENCY_OPTIONS as unknown as [string, ...string[]];
 const contractStatusTuple = CONTRACT_STATUS_OPTIONS as unknown as [string, ...string[]];
+const authorityNoteTypeTuple = NOTE_TYPE_VALUES as unknown as [string, ...string[]];
 
 const allowanceSchema = z.object({
   aid: z.string(),
@@ -26,7 +28,10 @@ const allowanceSchema = z.object({
 export const contractFormSchema = z
   .object({
     employeeId: z.string().trim().min(1, "Employee is required"),
-    minuteNumber: z.string().optional(),
+    authorityNoteType: z.union([z.literal(""), z.enum(authorityNoteTypeTuple)]),
+    authorityReferenceMode: z.union([z.literal(""), z.enum(["note_monitor", "manual"])]),
+    authorityNoteMonitorRecordId: z.string().optional(),
+    authorityNoteManualReference: z.string().optional(),
     noAssignedContractNumber: z.boolean(),
     contractNumber: z.string().optional(),
     durationPreset: z.union([z.literal(""), z.enum(["3", "6", "12", "24", "custom"])]),
@@ -101,6 +106,55 @@ export const contractFormSchema = z
         message: "Date employee signed contract cannot be before date employee received contract.",
         path: ["dateSigned"],
       });
+    }
+
+    const monitorId = data.authorityNoteMonitorRecordId?.trim() || "";
+    const manualRef = data.authorityNoteManualReference?.trim() || "";
+    const hasMonitor = Boolean(monitorId);
+    const hasManual = Boolean(manualRef);
+
+    if (!hasMonitor && !hasManual) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Select a note from Note Monitor or enter a manual authority reference.",
+        path: ["authorityNoteType"],
+      });
+      return;
+    }
+
+    if (hasMonitor && hasManual) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Use either a Note Monitor record or a manual reference, not both.",
+        path: ["authorityNoteMonitorRecordId"],
+      });
+      return;
+    }
+
+    if (!data.authorityNoteType || data.authorityNoteType === "") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Authority note type is required.",
+        path: ["authorityNoteType"],
+      });
+    }
+
+    if (hasMonitor) {
+      if (data.authorityReferenceMode !== "note_monitor") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Reference mode must be Note Monitor when a monitor record is selected.",
+          path: ["authorityReferenceMode"],
+        });
+      }
+    } else if (hasManual) {
+      if (data.authorityReferenceMode !== "manual") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Reference mode must be manual when entering a reference by hand.",
+          path: ["authorityReferenceMode"],
+        });
+      }
     }
 
     data.allowances.forEach((allowance, index) => {

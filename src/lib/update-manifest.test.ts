@@ -9,15 +9,15 @@ import {
 
 const validManifest = {
   appName: EXPECTED_APP_NAME,
-  latestVersion: "0.13.1-beta",
-  releaseTag: "v0.13.1-beta",
-  releaseDate: "2026-05-09",
+  latestVersion: "0.13.0-beta",
+  releaseTag: "v0.13.0-beta",
+  releaseDate: "2026-05-20",
   updateChannel: "beta",
   minimumSupportedVersion: "0.11.0-beta",
   requiresDatabaseMigration: true,
   requiresDockerRebuild: true,
-  releaseUrl: "https://github.com/youdevon/local-db-hr/releases/tag/v0.13.1-beta",
-  downloadUrl: "https://github.com/youdevon/local-db-hr/archive/refs/tags/v0.13.1-beta.zip",
+  releaseUrl: "https://github.com/youdevon/local-db-hr/releases/tag/v0.13.0-beta",
+  downloadUrl: "https://github.com/youdevon/local-db-hr/archive/refs/tags/v0.13.0-beta.zip",
   notes: ["Note a", "Note b"],
 };
 
@@ -25,7 +25,7 @@ describe("validateUpdateManifestJson", () => {
   it("accepts a well-formed manifest", () => {
     const r = validateUpdateManifestJson(validManifest);
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.manifest.latestVersion).toBe("0.13.1-beta");
+    if (r.ok) expect(r.manifest.latestVersion).toBe("0.13.0-beta");
   });
 
   it("rejects wrong app name", () => {
@@ -50,7 +50,7 @@ describe("buildUpdateCheckResult", () => {
       fetchFailed: false,
     });
     expect(body.updateAvailable).toBe(true);
-    expect(body.latestVersion).toBe("0.13.1-beta");
+    expect(body.latestVersion).toBe("0.13.0-beta");
     expect(body.error).toBeNull();
     expect(body.notes).toHaveLength(2);
   });
