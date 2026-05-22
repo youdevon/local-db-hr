@@ -25,6 +25,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    env_file:
+      - .env
     container_name: local-db-hr-app
     restart: unless-stopped
     depends_on:
@@ -47,6 +49,5 @@ services:
     volumes:
       - .:/host-project
       - /var/run/docker.sock:/var/run/docker.sock
-
 volumes:
   local_db_hr_postgres_data:

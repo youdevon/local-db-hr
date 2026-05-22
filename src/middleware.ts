@@ -109,6 +109,20 @@ export async function middleware(request: NextRequest) {
     return redirectExpired();
   }
 
+  if (session.user.mustChangePassword) {
+    const passwordChangeAllowed =
+      normalizedPath === "/profile" ||
+      normalizedPath.startsWith("/profile/") ||
+      normalizedPath === "/logout" ||
+      (isApiRoute && isAuthApiRoute);
+    if (!passwordChangeAllowed) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/profile";
+      url.searchParams.set("changePassword", "required");
+      return setNoStoreHeaders(NextResponse.redirect(url));
+    }
+  }
+
   const now = Date.now();
   const sessionSettings = await getSessionSettings();
   const expiryReason = getSessionExpiryReason(

@@ -38,6 +38,8 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/next.config.* ./
 COPY --from=builder /app/scripts ./scripts
 
+RUN chmod +x /app/scripts/docker-entrypoint.sh /app/scripts/install.sh
+
 EXPOSE 3000
 
-CMD ["npm", "start"]
+ENTRYPOINT ["/app/scripts/docker-entrypoint.sh"]

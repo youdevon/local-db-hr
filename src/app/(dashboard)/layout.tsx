@@ -20,6 +20,7 @@ export default async function DashboardGroupLayout({
 
   const viewOnly = isViewerRole(session.user.role);
   const role = normalizeUserRole(session.user.role);
+  const mustChangePassword = session.user.mustChangePassword === true;
   const canOpenLicenseSettings = role === "administrator";
 
   let licenseIndicator: SidebarLicenseIndicator | null = null;
@@ -39,7 +40,12 @@ export default async function DashboardGroupLayout({
   }
 
   return (
-    <AppShell user={session.user} viewOnly={viewOnly} licenseIndicator={licenseIndicator}>
+    <AppShell
+      user={session.user}
+      viewOnly={viewOnly}
+      mustChangePassword={mustChangePassword}
+      licenseIndicator={licenseIndicator}
+    >
       {children}
     </AppShell>
   );

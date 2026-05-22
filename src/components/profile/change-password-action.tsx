@@ -1,6 +1,7 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 
@@ -19,8 +20,14 @@ import { Label } from "@/components/ui/label";
 import { notifyError, notifySuccess } from "@/lib/notify";
 import { changeOwnPasswordSchema, type ChangeOwnPasswordInput } from "@/lib/validators/user";
 
-export function ChangePasswordAction() {
-  const [open, setOpen] = useState(false);
+export function ChangePasswordAction({
+  requirePasswordChange = false,
+}: {
+  requirePasswordChange?: boolean;
+}) {
+  const router = useRouter();
+  const [manualOpen, setManualOpen] = useState(false);
+  const open = requirePasswordChange || manualOpen;
   const form = useForm<ChangeOwnPasswordInput>({
     resolver: zodResolver(changeOwnPasswordSchema),
     defaultValues: {
@@ -42,8 +49,12 @@ export function ChangePasswordAction() {
       return;
     }
     notifySuccess("Password changed successfully.");
-    setOpen(false);
+    setManualOpen(false);
     reset();
+    router.refresh();
+    if (requirePasswordChange) {
+      router.replace("/profile");
+    }
   }
 
   function onInvalidSubmit() {
@@ -60,20 +71,27 @@ export function ChangePasswordAction() {
 
   return (
     <>
-      <Button type="button" className="h-10 rounded-md text-sm font-medium" onClick={() => setOpen(true)}>
-        Change Password
-      </Button>
+      {!requirePasswordChange ? (
+        <Button type="button" className="h-10 rounded-md text-sm font-medium" onClick={() => setManualOpen(true)}>
+          Change Password
+        </Button>
+      ) : null}
       <Dialog
         open={open}
         onOpenChange={(nextOpen) => {
-          setOpen(nextOpen);
+          if (requirePasswordChange && !nextOpen) return;
+          setManualOpen(nextOpen);
           if (!nextOpen) reset();
         }}
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Change Password</DialogTitle>
-            <DialogDescription>Enter and confirm your new password.</DialogDescription>
+            <DialogTitle>{requirePasswordChange ? "Change Required Password" : "Change Password"}</DialogTitle>
+            <DialogDescription>
+              {requirePasswordChange
+                ? "Your account is using temporary setup credentials. Choose a new password before continuing."
+                : "Enter and confirm your new password."}
+            </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit(onSubmit, onInvalidSubmit)} className="space-y-4">
             <div className="space-y-2">
@@ -103,9 +121,11 @@ export function ChangePasswordAction() {
               ) : null}
             </div>
             <DialogFooter className="gap-2 sm:justify-end">
-              <Button type="button" variant="secondary" className="h-10 rounded-md" onClick={() => setOpen(false)}>
-                Cancel
-              </Button>
+              {!requirePasswordChange ? (
+                <Button type="button" variant="secondary" className="h-10 rounded-md" onClick={() => setManualOpen(false)}>
+                  Cancel
+                </Button>
+              ) : null}
               <Button type="submit" className="h-10 rounded-md" disabled={isSubmitting}>
                 {isSubmitting ? "Saving..." : "Save Password"}
               </Button>

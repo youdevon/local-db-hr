@@ -1,13 +1,15 @@
 #!/usr/bin/env node
-import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
 
-import { SignJWT, importPKCS8, type KeyLike } from "jose";
 import "dotenv/config";
 
-import { HR_PRODUCT_NAME, type LicenseType, type SignedLicencePayload } from "./payload.js";
+import {
+  LicenseGeneratorError,
+  signProviderLicenseKey,
+} from "../../../src/lib/licensing/sign-provider-license.js";
+import { HR_PRODUCT_NAME, getHardStopDateIso } from "../../../src/lib/licensing/license-payload.js";
 
 function usage(): never {
   console.error(`
@@ -27,26 +29,26 @@ Options:
   --issued-at        Issue date YYYY-MM-DD (default: today UTC)
 
 Environment:
+  LICENSE_PRIVATE_KEY_PEM    Inline PKCS #8 PEM private key (Ed25519)
   LICENSE_PRIVATE_KEY_PATH   Path to PKCS #8 PEM private key (Ed25519)
 `);
   process.exit(1);
 }
 
-function parseIsoDateDay(value: string, label: string): string {
-  const d = new Date(`${value.trim()}T00:00:00.000Z`);
-  if (Number.isNaN(d.getTime())) {
-    throw new Error(`Invalid date for ${label}: "${value}". Use YYYY-MM-DD.`);
-  }
-  return d.toISOString();
-}
+async function resolvePrivateKeyPem(): Promise<string> {
+  const inline = process.env.LICENSE_PRIVATE_KEY_PEM?.trim();
+  if (inline) return inline.replace(/\\n/g, "\n");
 
-function parseOptionalNumber(raw: string | undefined, label: string): number | null {
-  if (raw === undefined || raw.trim() === "") return null;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) {
-    throw new Error(`Invalid ${label}: expected a non-negative number.`);
+  const privateKeyPath =
+    process.env.LICENSE_PRIVATE_KEY_PATH?.trim() || path.join(process.cwd(), "keys", "license-private.pem");
+
+  try {
+    return await fs.readFile(privateKeyPath, "utf8");
+  } catch {
+    throw new LicenseGeneratorError(
+      `Missing private key: could not read "${privateKeyPath}". Set LICENSE_PRIVATE_KEY_PEM, LICENSE_PRIVATE_KEY_PATH, or run npm run generate-keypair.`,
+    );
   }
-  return Math.floor(n);
 }
 
 async function main() {
@@ -71,113 +73,43 @@ async function main() {
     usage();
   }
 
-  const licenseType = values.type.trim().toLowerCase() as LicenseType;
-  const allowed: LicenseType[] = ["trial", "active", "permanent", "suspended"];
-  if (!allowed.includes(licenseType)) {
-    throw new Error(`Unsupported licence type "${values.type}". Use: ${allowed.join(", ")}.`);
-  }
-
-  const grace = Number(values.grace);
-  if (!Number.isFinite(grace) || grace < 0 || grace > 3650) {
-    throw new Error("Invalid --grace: expected an integer between 0 and 3650.");
-  }
-
-  let expiresAt: string | null = null;
-  if (values.expires?.trim()) {
-    expiresAt = parseIsoDateDay(values.expires, "--expires");
-  }
-
-  if ((licenseType === "trial" || licenseType === "active") && !expiresAt) {
-    throw new Error(`Missing or invalid --expires: required for licence type "${licenseType}".`);
-  }
-
-  if (licenseType === "permanent" && !expiresAt) {
-    expiresAt = null;
-  }
-
-  /* suspended: expires optional (e.g. end of suspension window) */
-
-  const issuedAtRaw = values["issued-at"]?.trim();
-  const issuedAt = issuedAtRaw ? parseIsoDateDay(issuedAtRaw, "--issued-at") : new Date().toISOString();
-
-  const productName = (values.product?.trim() || HR_PRODUCT_NAME) as SignedLicencePayload["productName"];
+  const productName = values.product?.trim() || HR_PRODUCT_NAME;
   if (productName !== HR_PRODUCT_NAME) {
-    throw new Error(`Invalid --product: HR app only accepts "${HR_PRODUCT_NAME}" for verification.`);
+    throw new LicenseGeneratorError(`Invalid --product: HR app only accepts "${HR_PRODUCT_NAME}" for verification.`);
   }
 
-  const maxUsers = parseOptionalNumber(values["max-users"], "--max-users");
-  const maxEmployees = parseOptionalNumber(values["max-employees"], "--max-employees");
+  const privateKeyPem = await resolvePrivateKeyPem();
+  const { licenseKey, claims } = await signProviderLicenseKey(
+    {
+      organizationName: values.org.trim(),
+      licenseType: values.type.trim().toLowerCase() as "trial" | "active" | "permanent" | "suspended",
+      expiresAt: values.expires?.trim() || null,
+      gracePeriodDays: Number(values.grace),
+      maxUsers: values["max-users"],
+      maxEmployees: values["max-employees"],
+      issuedBy: values["issued-by"]?.trim() || "D3 Services",
+      notes: values.notes ?? "",
+      issuedAt: values["issued-at"]?.trim() || null,
+    },
+    privateKeyPem,
+  );
 
-  const privateKeyPath =
-    process.env.LICENSE_PRIVATE_KEY_PATH?.trim() || path.join(process.cwd(), "keys", "license-private.pem");
-
-  let pem: string;
-  try {
-    pem = await fs.readFile(privateKeyPath, "utf8");
-  } catch {
-    throw new Error(
-      `Missing private key: could not read "${privateKeyPath}". Set LICENSE_PRIVATE_KEY_PATH or run npm run generate-keypair.`,
-    );
-  }
-
-  let privateKey: KeyLike;
-  try {
-    privateKey = await importPKCS8(pem, "Ed25519");
-  } catch {
-    throw new Error("Invalid private key file: expected PKCS #8 PEM for Ed25519.");
-  }
-
-  const licenceId = crypto.randomUUID();
-  const generatedAt = new Date().toISOString();
-
-  const payload: SignedLicencePayload = {
-    licenceId,
-    organizationName: values.org.trim(),
-    productName,
-    licenseType,
-    issuedAt,
-    expiresAt,
-    gracePeriodDays: grace,
-    maxUsers,
-    maxEmployees,
-    issuedBy: values["issued-by"]?.trim() || "D3 Services",
-    notes: values.notes?.trim() ?? "",
-    generatedAt,
-  };
-
-  const jwt = await new SignJWT({
-    ...payload,
-  })
-    .setProtectedHeader({ alg: "EdDSA", typ: "JWT" })
-    .sign(privateKey);
-
-  const licenceKey = `D3HR.${jwt}`;
-
-  function addDaysUtc(base: Date, days: number): Date {
-    const next = new Date(base);
-    next.setUTCDate(next.getUTCDate() + days);
-    return next;
-  }
-  const expiresDate = expiresAt ? new Date(expiresAt) : null;
-  const hardStop =
-    expiresDate == null || Number.isNaN(expiresDate.getTime())
-      ? "(n/a — no expiry)"
-      : addDaysUtc(expiresDate, grace).toISOString();
+  const hardStop = getHardStopDateIso(claims.expiresAt, claims.gracePeriodDays);
 
   console.info("");
-  console.info("Licence ID:           ", licenceId);
-  console.info("Organisation name:    ", payload.organizationName);
-  console.info("Licence type:         ", payload.licenseType);
-  console.info("Issue date (UTC):     ", payload.issuedAt);
-  console.info("Expiry date (UTC):    ", payload.expiresAt ?? "(none)");
-  console.info("Grace period (days):  ", String(grace));
-  console.info("Hard stop date (UTC): ", hardStop);
-  console.info("Max users:            ", maxUsers == null ? "(unlimited)" : String(maxUsers));
-  console.info("Max employees:        ", maxEmployees == null ? "(unlimited)" : String(maxEmployees));
-  console.info("Issued by:            ", payload.issuedBy);
+  console.info("Licence ID:           ", claims.licenceId);
+  console.info("Organisation name:    ", claims.organizationName);
+  console.info("Licence type:         ", claims.licenseType);
+  console.info("Issue date (UTC):     ", claims.issuedAt);
+  console.info("Expiry date (UTC):    ", claims.expiresAt ?? "(none)");
+  console.info("Grace period (days):  ", String(claims.gracePeriodDays));
+  console.info("Hard stop date (UTC): ", hardStop ?? "(n/a — no expiry)");
+  console.info("Max users:            ", claims.maxUsers == null ? "(unlimited)" : String(claims.maxUsers));
+  console.info("Max employees:        ", claims.maxEmployees == null ? "(unlimited)" : String(claims.maxEmployees));
+  console.info("Issued by:            ", claims.issuedBy);
   console.info("");
   console.info("Generated licence key:");
-  console.info(licenceKey);
+  console.info(licenseKey);
   console.info("");
 }
 

@@ -18,6 +18,8 @@ export default async function SettingsPage() {
   const role = normalizeUserRole(session.user?.role);
   const showAdminSettingsCards = role === "administrator";
   const showLicenseCard = showAdminSettingsCards;
+  const showLicenceGeneratorCard =
+    showAdminSettingsCards && process.env.ENABLE_LICENSE_GENERATOR === "true";
   const license = showLicenseCard ? await getLicenseStatus() : null;
 
   const licenseSummary = !license
@@ -259,6 +261,28 @@ export default async function SettingsPage() {
             <ChevronRight className="text-muted-foreground mt-0.5 h-4 w-4 shrink-0 transition group-hover:translate-x-0.5 group-hover:text-blue-600 dark:group-hover:text-blue-400" />
           </div>
         </Link>
+        {showLicenceGeneratorCard ? (
+          <Link
+            href="/settings/licence-generator"
+            className={cn(
+              "group block rounded-xl border border-border bg-card p-5",
+              "shadow-[0_6px_18px_rgba(15,23,42,0.08)] transition-[transform,box-shadow,border-color] duration-200",
+              "hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-[0_10px_24px_rgba(15,23,42,0.12)]",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2",
+              "dark:hover:border-neutral-700 dark:focus-visible:ring-offset-neutral-950 dark:shadow-[0_6px_18px_rgba(0,0,0,0.35)]",
+            )}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h3 className="text-foreground text-sm font-semibold">Licence Generator</h3>
+                <p className="text-muted-foreground mt-1 text-sm">
+                  Provider-only tool to issue signed D3HR licence keys. Never enable on customer installations.
+                </p>
+              </div>
+              <ChevronRight className="text-muted-foreground mt-0.5 h-4 w-4 shrink-0 transition group-hover:translate-x-0.5 group-hover:text-blue-600 dark:group-hover:text-blue-400" />
+            </div>
+          </Link>
+        ) : null}
         {showLicenseCard ? (
           <Link
             href="/settings/license"

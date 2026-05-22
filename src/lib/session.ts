@@ -6,6 +6,7 @@ export type SessionUser = {
   name: string;
   role: string;
   department: string | null;
+  mustChangePassword?: boolean;
 };
 
 export type SessionData = {

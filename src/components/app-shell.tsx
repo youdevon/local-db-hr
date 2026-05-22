@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 
 import { MainFooter } from "@/components/main-footer";
 import { PageContainer } from "@/components/page-container";
+import { PasswordChangeRequiredBanner } from "@/components/password-change-required-banner";
 import { SessionTimeoutGuard } from "@/components/session-timeout-guard";
 import { Sidebar } from "@/components/sidebar";
 import type { SidebarLicenseIndicator } from "@/components/sidebar-footer-tray";
@@ -14,11 +15,13 @@ export function AppShell({
   user,
   children,
   viewOnly = false,
+  mustChangePassword = false,
   licenseIndicator = null,
 }: {
   user: SessionUser;
   children: React.ReactNode;
   viewOnly?: boolean;
+  mustChangePassword?: boolean;
   licenseIndicator?: SidebarLicenseIndicator | null;
 }) {
   return (
@@ -37,6 +40,7 @@ export function AppShell({
             className="min-h-0 flex-1 overflow-y-auto"
           >
             <PageContainer>
+              {mustChangePassword ? <PasswordChangeRequiredBanner /> : null}
               {viewOnly ? (
                 <p
                   className="border-border bg-muted/30 text-muted-foreground mb-4 rounded-lg border px-3 py-2 text-sm"

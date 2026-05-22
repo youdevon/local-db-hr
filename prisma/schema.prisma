@@ -16,6 +16,7 @@ model User {
   is_active                                                 Boolean               @default(true) @map("is_active")
   is_locked                                                 Boolean               @default(false) @map("is_locked")
   failed_login_attempts                                     Int                   @default(0) @map("failed_login_attempts")
+  must_change_password                                      Boolean               @default(false) @map("must_change_password")
   last_login_at                                             DateTime?             @map("last_login_at") @db.Timestamptz(6)
   last_login_ip                                             String?               @map("last_login_ip") @db.Inet
   last_login_device                                         String?               @map("last_login_device")

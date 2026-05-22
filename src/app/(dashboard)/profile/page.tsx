@@ -55,6 +55,10 @@ export default async function ProfilePage({
   const params = await searchParams;
   const contractIdRaw = params.contractId;
   const contractIdParam = (Array.isArray(contractIdRaw) ? contractIdRaw[0] : contractIdRaw)?.trim() ?? "";
+  const changePasswordRaw = params.changePassword;
+  const changePasswordParam = (Array.isArray(changePasswordRaw) ? changePasswordRaw[0] : changePasswordRaw)?.trim() ?? "";
+  const requirePasswordChange =
+    session.user?.mustChangePassword === true || changePasswordParam === "required";
 
   const data = await getProfileSelfServiceData(sessionUserId, sessionEmail);
   if (!data) redirect("/login");
@@ -87,7 +91,7 @@ export default async function ProfilePage({
         description="Your employment summary, contracts, leave, and personal contact details for self-service updates."
         actions={
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <ChangePasswordAction />
+            <ChangePasswordAction requirePasswordChange={requirePasswordChange} />
             {data.employee ? (
               <ProfileUpdatePersonalDialog initialValues={data.employee.personal} />
             ) : null}

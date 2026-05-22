@@ -52,6 +52,19 @@ Do not commit or share `.env.docker`.
 docker compose --env-file .env.docker up -d --build
 ```
 
+On a **fresh install** with no existing administrator account, the application creates a temporary default administrator automatically after database migrations complete.
+
+**TEMPORARY setup credentials (change immediately after first login):**
+
+| Field | Value |
+| --- | --- |
+| Email | `admin@dbhr.local` |
+| Password | `ChangeMe@12345` |
+| Display name | System Administrator |
+| Role | Administrator |
+
+**Security reminder:** These credentials are for initial setup only. Sign in once, change the password when prompted, and do not reuse this password in production. The seed step is skipped on upgrades when any administrator account already exists.
+
 Check services:
 
 ```bash
@@ -163,6 +176,7 @@ pg_dump "$DATABASE_URL" -Fc -f database/backup/local-db-hr-current.dump
 
 - Change the default database password.
 - Change `AUTH_SECRET`.
+- On first fresh install, change the temporary default administrator password (`admin@dbhr.local`) immediately after signing in.
 - Do not share `.env.docker`.
 - Keep database backup files secure.
 - Use firewall rules in production.

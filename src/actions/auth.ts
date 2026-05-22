@@ -238,6 +238,7 @@ export async function loginAction(
       select: {
         id: true,
         email: true,
+        must_change_password: true,
         profile: {
           select: {
             full_name: true,
@@ -282,6 +283,25 @@ export async function loginAction(
       failureReason: null,
     });
 
+    const mustChangePassword = user.must_change_password === true;
+    if (mustChangePassword) {
+      await createSystemAuditLog({
+        actorUserId: user.id,
+        actorEmail: user.email,
+        actorName: user.profile?.full_name ?? null,
+        module: "Authentication",
+        action: "default_admin_first_login",
+        targetType: "user",
+        targetId: user.id,
+        targetLabel: `User: ${user.email}`,
+        success: true,
+        metadata: { mustChangePassword: true },
+        ipAddress: ip,
+        deviceName: deviceLabel,
+        userAgent,
+      });
+    }
+
     let session: IronSession<SessionData>;
     try {
       session = await getIronSession<SessionData>(await cookies(), sessionOptions);
@@ -296,6 +316,7 @@ export async function loginAction(
       name: user.profile?.full_name ?? user.email,
       role: userRole,
       department: user.profile?.department ?? null,
+      mustChangePassword,
     };
     const now = Date.now();
     session.createdAt = now;
@@ -305,9 +326,10 @@ export async function loginAction(
       userId: user.id,
       role: userRole,
       cookieName: sessionOptions.cookieName,
+      mustChangePassword,
     });
 
-    redirect(DASHBOARD_HREF);
+    redirect(mustChangePassword ? "/profile?changePassword=required" : DASHBOARD_HREF);
   } catch (err) {
     if (isNextRedirectError(err)) throw err;
     loginDebug("error", { normalizedEmail, message: err instanceof Error ? err.message : String(err) });

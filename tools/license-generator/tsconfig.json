@@ -8,5 +8,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "../../src/lib/licensing/license-payload.ts", "../../src/lib/licensing/sign-provider-license.ts"]
 }

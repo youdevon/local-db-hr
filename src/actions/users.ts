@@ -1,7 +1,9 @@
 "use server";
 
 import { Prisma } from "@prisma/client";
+import { getIronSession } from "iron-session";
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 
 import { createLoginAuditLog, createSystemAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { requirePermission, requireSessionUserId } from "@/lib/auth-server";
@@ -14,6 +16,7 @@ import {
   getRoleSafetySettings,
   validatePasswordAgainstPolicy,
 } from "@/lib/security-settings";
+import { sessionOptions, type SessionData } from "@/lib/session";
 import { initialsFromFullName } from "@/lib/user-initials";
 import {
   changeOwnPasswordSchema,
@@ -631,9 +634,11 @@ export async function changeOwnPasswordAction(input: unknown): Promise<PasswordC
     where: { id: actorId },
     select: {
       email: true,
+      must_change_password: true,
       profile: { select: { full_name: true } },
     },
   });
+  const requiredPasswordChange = actor?.must_change_password === true;
   const { ip, userAgent, deviceLabel } = await getAuditRequestContext();
 
   const parsed = changeOwnPasswordSchema.safeParse(input);
@@ -676,6 +681,7 @@ export async function changeOwnPasswordAction(input: unknown): Promise<PasswordC
         UPDATE public.users
         SET
           password_hash = crypt(${newPassword}::text, gen_salt('bf')),
+          must_change_password = false,
           updated_at = NOW()
         WHERE id = ${actorId}::uuid
       `,
@@ -720,10 +726,38 @@ export async function changeOwnPasswordAction(input: unknown): Promise<PasswordC
       targetId: actorId,
       targetLabel: actor?.email ? `User: ${actor.email}` : "User: Unknown",
       success: true,
+      metadata: requiredPasswordChange ? { requiredPasswordChangeCompleted: true } : undefined,
       ipAddress: ip,
       deviceName: deviceLabel,
       userAgent,
     });
+    if (requiredPasswordChange) {
+      await createSystemAuditLog({
+        actorUserId: actorId,
+        actorEmail: actor?.email ?? null,
+        actorName: actor?.profile?.full_name ?? null,
+        module: "Authentication",
+        action: "default_admin_password_changed",
+        targetType: "user",
+        targetId: actorId,
+        targetLabel: actor?.email ? `User: ${actor.email}` : "User: Unknown",
+        success: true,
+        ipAddress: ip,
+        deviceName: deviceLabel,
+        userAgent,
+      });
+    }
+
+    try {
+      const session = await getIronSession<SessionData>(await cookies(), sessionOptions);
+      if (session.user?.userId === actorId) {
+        session.user.mustChangePassword = false;
+        await session.save();
+      }
+    } catch {
+      // Password change succeeded; session refresh failure should not block the result.
+    }
+
     return { success: true, message: "Password changed successfully." };
   } catch {
     await createSystemAuditLog({
