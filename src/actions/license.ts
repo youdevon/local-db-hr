@@ -7,15 +7,17 @@ import { createSystemAuditLog, getAuditRequestContext } from "@/lib/audit";
 import { sendHrNotification } from "@/lib/email/hr-notifications";
 import { buildSimpleHrTemplate } from "@/lib/email/templates";
 import {
-  getLicensePublicKeyPemFromEnv,
   verifyD3hrLicenseKey,
   VerifyLicenseKeyError,
   type SignedLicenseClaims,
 } from "@/lib/license-key-verification";
 import { getSession } from "@/lib/get-session";
 import {
+  assertLicensePublicKeyConfigured,
   getDefaultLicenseSettings,
   getLicenseSettings,
+  getLicensePublicKeyConfigurationError,
+  LicenseSettingsPersistenceError,
   maskLicenseKey,
   saveLicenseSettings,
   type LicenseType,
@@ -81,24 +83,31 @@ export async function initializeDefaultLicenseSettingsAction(): Promise<LicenseA
   if (existing) return { success: true, message: "Licence settings are already configured." };
 
   const defaults = await getDefaultLicenseSettings();
-  await saveLicenseSettings({
-    organizationName: defaults.organizationName,
-    licenseType: defaults.licenseType,
-    licenseStatus: defaults.licenseStatus,
-    issuedAt: defaults.issuedAt,
-    expiresAt: defaults.expiresAt,
-    gracePeriodDays: defaults.gracePeriodDays,
-    activatedAt: defaults.activatedAt,
-    licenceId: defaults.licenceId,
-    notes: defaults.notes,
-    licenseKey: defaults.licenseKey,
-    maxUsers: defaults.maxUsers,
-    maxEmployees: defaults.maxEmployees,
-    issuedBy: defaults.issuedBy,
-    lastValidCheckAt: defaults.lastValidCheckAt,
-    lastCheckedAt: defaults.lastCheckedAt,
-    clockTamperDetectedAt: defaults.clockTamperDetectedAt,
-  });
+  try {
+    await saveLicenseSettings({
+      organizationName: defaults.organizationName,
+      licenseType: defaults.licenseType,
+      licenseStatus: defaults.licenseStatus,
+      issuedAt: defaults.issuedAt,
+      expiresAt: defaults.expiresAt,
+      gracePeriodDays: defaults.gracePeriodDays,
+      activatedAt: defaults.activatedAt,
+      licenceId: defaults.licenceId,
+      notes: defaults.notes,
+      licenseKey: defaults.licenseKey,
+      maxUsers: defaults.maxUsers,
+      maxEmployees: defaults.maxEmployees,
+      issuedBy: defaults.issuedBy,
+      lastValidCheckAt: defaults.lastValidCheckAt,
+      lastCheckedAt: defaults.lastCheckedAt,
+      clockTamperDetectedAt: defaults.clockTamperDetectedAt,
+    });
+  } catch (error) {
+    if (error instanceof LicenseSettingsPersistenceError) {
+      return { success: false, message: error.message };
+    }
+    throw error;
+  }
 
   await createSystemAuditLog({
     actorUserId: actor.userId,
@@ -134,12 +143,13 @@ export async function applySignedLicenseKeyAction(licenceKey: string): Promise<L
   const actor = await requireAdmin();
   if (!actor) return { success: false, message: LICENSE_PERMISSION_MESSAGE };
 
-  const pem = getLicensePublicKeyPemFromEnv();
-  if (!pem) {
+  let pem: string;
+  try {
+    pem = assertLicensePublicKeyConfigured();
+  } catch (e) {
     return {
       success: false,
-      message:
-        "Licence signature verification is not configured. Set LICENSE_PUBLIC_KEY_PEM on the server with the Ed25519 public key PEM.",
+      message: e instanceof Error ? e.message : getLicensePublicKeyConfigurationError() ?? "Licence public key is not configured.",
     };
   }
 
@@ -170,24 +180,31 @@ export async function applySignedLicenseKeyAction(licenceKey: string): Promise<L
 
   const keyTrimmed = licenceKey.trim();
 
-  await saveLicenseSettings({
-    organizationName: claims.organizationName,
-    licenseType: claims.licenseType,
-    licenseStatus: nextStatus,
-    issuedAt: claims.issuedAt,
-    expiresAt,
-    gracePeriodDays: claims.gracePeriodDays,
-    activatedAt,
-    licenceId: claims.licenceId,
-    notes: claims.notes?.trim() || null,
-    licenseKey: keyTrimmed,
-    maxUsers: claims.maxUsers ?? null,
-    maxEmployees: claims.maxEmployees ?? null,
-    issuedBy: claims.issuedBy?.trim() || null,
-    lastValidCheckAt: existing?.lastValidCheckAt ?? null,
-    lastCheckedAt: existing?.lastCheckedAt ?? null,
-    clockTamperDetectedAt: existing?.clockTamperDetectedAt ?? null,
-  });
+  try {
+    await saveLicenseSettings({
+      organizationName: claims.organizationName,
+      licenseType: claims.licenseType,
+      licenseStatus: nextStatus,
+      issuedAt: claims.issuedAt,
+      expiresAt,
+      gracePeriodDays: claims.gracePeriodDays,
+      activatedAt,
+      licenceId: claims.licenceId,
+      notes: claims.notes?.trim() || null,
+      licenseKey: keyTrimmed,
+      maxUsers: claims.maxUsers ?? null,
+      maxEmployees: claims.maxEmployees ?? null,
+      issuedBy: claims.issuedBy?.trim() || null,
+      lastValidCheckAt: existing?.lastValidCheckAt ?? null,
+      lastCheckedAt: existing?.lastCheckedAt ?? null,
+      clockTamperDetectedAt: existing?.clockTamperDetectedAt ?? null,
+    });
+  } catch (error) {
+    if (error instanceof LicenseSettingsPersistenceError) {
+      return { success: false, message: error.message };
+    }
+    throw error;
+  }
 
   await createSystemAuditLog({
     actorUserId: actor.userId,
@@ -257,24 +274,31 @@ export async function saveLicenseSettingsAction(input: unknown): Promise<License
       ? existing?.activatedAt ?? nowIso
       : existing?.activatedAt ?? null;
 
-  await saveLicenseSettings({
-    organizationName: data.organizationName,
-    licenseType,
-    licenseStatus: nextStatus,
-    issuedAt,
-    expiresAt,
-    gracePeriodDays: data.gracePeriodDays,
-    activatedAt,
-    licenceId: existing?.licenceId ?? null,
-    notes: existing?.notes ?? null,
-    licenseKey: existing?.licenseKey ?? null,
-    maxUsers: data.maxUsers === "" || data.maxUsers == null ? null : Number(data.maxUsers),
-    maxEmployees: data.maxEmployees === "" || data.maxEmployees == null ? null : Number(data.maxEmployees),
-    issuedBy: data.issuedBy?.trim() || null,
-    lastValidCheckAt: existing?.lastValidCheckAt ?? null,
-    lastCheckedAt: existing?.lastCheckedAt ?? null,
-    clockTamperDetectedAt: existing?.clockTamperDetectedAt ?? null,
-  });
+  try {
+    await saveLicenseSettings({
+      organizationName: data.organizationName,
+      licenseType,
+      licenseStatus: nextStatus,
+      issuedAt,
+      expiresAt,
+      gracePeriodDays: data.gracePeriodDays,
+      activatedAt,
+      licenceId: existing?.licenceId ?? null,
+      notes: existing?.notes ?? null,
+      licenseKey: existing?.licenseKey ?? null,
+      maxUsers: data.maxUsers === "" || data.maxUsers == null ? null : Number(data.maxUsers),
+      maxEmployees: data.maxEmployees === "" || data.maxEmployees == null ? null : Number(data.maxEmployees),
+      issuedBy: data.issuedBy?.trim() || null,
+      lastValidCheckAt: existing?.lastValidCheckAt ?? null,
+      lastCheckedAt: existing?.lastCheckedAt ?? null,
+      clockTamperDetectedAt: existing?.clockTamperDetectedAt ?? null,
+    });
+  } catch (error) {
+    if (error instanceof LicenseSettingsPersistenceError) {
+      return { success: false, message: error.message };
+    }
+    throw error;
+  }
 
   await createSystemAuditLog({
     actorUserId: actor.userId,

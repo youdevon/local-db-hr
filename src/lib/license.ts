@@ -1,6 +1,10 @@
 import { Prisma } from "@prisma/client";
 
+import { getLicensePublicKeyPemFromEnv } from "@/lib/license-key-verification";
 import { prisma } from "@/lib/prisma";
+
+const LICENSE_PUBLIC_KEY_MISSING_MESSAGE =
+  "LICENSE_PUBLIC_KEY_PEM is not configured. Set the Ed25519 public key PEM in the server environment (see .env.example or config/license-public-key.pem).";
 
 export const LICENSE_SETTINGS_KEY = "license_settings" as const;
 
@@ -126,6 +130,19 @@ function toInt(value: unknown, fallback: number, min: number, max: number): numb
   if (rounded < min) return min;
   if (rounded > max) return max;
   return rounded;
+}
+
+/** Throws when LICENSE_PUBLIC_KEY_PEM is missing or blank (required for signed licence verification). */
+export function assertLicensePublicKeyConfigured(): string {
+  const pem = getLicensePublicKeyPemFromEnv();
+  if (!pem) {
+    throw new Error(LICENSE_PUBLIC_KEY_MISSING_MESSAGE);
+  }
+  return pem;
+}
+
+export function getLicensePublicKeyConfigurationError(): string | null {
+  return getLicensePublicKeyPemFromEnv() ? null : LICENSE_PUBLIC_KEY_MISSING_MESSAGE;
 }
 
 export function maskLicenseKey(value: string | null): string | null {
@@ -319,6 +336,23 @@ export async function getDefaultLicenseSettings(): Promise<LicenseSettings> {
   };
 }
 
+export const LICENSE_SETTINGS_PERSISTENCE_ERROR_MESSAGE =
+  "Could not save licence settings. The app_settings table is missing a unique constraint on setting_key. Run sql/performance-indexes.sql (or prisma migrate deploy), then try activating again.";
+
+export class LicenseSettingsPersistenceError extends Error {
+  constructor(message: string = LICENSE_SETTINGS_PERSISTENCE_ERROR_MESSAGE) {
+    super(message);
+    this.name = "LicenseSettingsPersistenceError";
+  }
+}
+
+function isAppSettingsOnConflictError(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  if (error.code !== "P2010") return false;
+  const message = String(error.meta?.message ?? error.message ?? "").toLowerCase();
+  return message.includes("on conflict") || message.includes("unique or exclusion constraint");
+}
+
 export async function saveLicenseSettings(
   input: Omit<LicenseSettings, "createdAt" | "updatedAt" | "productName">,
 ): Promise<LicenseSettings> {
@@ -332,21 +366,28 @@ export async function saveLicenseSettings(
     updatedAt: now.toISOString(),
   };
 
-  await prisma.$executeRaw(
-    Prisma.sql`
-      INSERT INTO public.app_settings (setting_key, setting_value, description)
-      VALUES (
-        ${LICENSE_SETTINGS_KEY},
-        ${JSON.stringify(next)}::jsonb,
-        'Licence and activation settings for this installation.'
-      )
-      ON CONFLICT (setting_key)
-      DO UPDATE SET
-        setting_value = EXCLUDED.setting_value,
-        description = EXCLUDED.description,
-        updated_at = NOW()
-    `,
-  );
+  try {
+    await prisma.$executeRaw(
+      Prisma.sql`
+        INSERT INTO public.app_settings (setting_key, setting_value, description)
+        VALUES (
+          ${LICENSE_SETTINGS_KEY},
+          ${JSON.stringify(next)}::jsonb,
+          'Licence and activation settings for this installation.'
+        )
+        ON CONFLICT (setting_key)
+        DO UPDATE SET
+          setting_value = EXCLUDED.setting_value,
+          description = EXCLUDED.description,
+          updated_at = NOW()
+      `,
+    );
+  } catch (error) {
+    if (isAppSettingsOnConflictError(error)) {
+      throw new LicenseSettingsPersistenceError();
+    }
+    throw error;
+  }
 
   return next;
 }
