@@ -1,6 +1,6 @@
 {
   "name": "local-db-hr",
-  "version": "0.13.0-beta",
+  "version": "0.13.1-beta",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -8,7 +8,13 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "postinstall": "prisma generate"
+    "validate:install": "bash scripts/validate-install.sh",
+    "postinstall": "prisma generate",
+    "db:seed-admin": "node scripts/seed-admin.cjs",
+    "release:build": "bash scripts/build-release.sh"
+  },
+  "prisma": {
+    "seed": "node scripts/seed-admin.cjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

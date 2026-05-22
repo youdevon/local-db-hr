@@ -189,6 +189,7 @@ validate_failed=""
 [[ -f "$INNER/VERSION.txt" ]] || validate_failed="missing VERSION.txt"
 [[ -d "$INNER/src" ]] || validate_failed="missing src/"
 [[ -d "$INNER/prisma" ]] || validate_failed="missing prisma/"
+[[ -d "$INNER/prisma/migrations" ]] || validate_failed="missing prisma/migrations/"
 [[ -f "$INNER/docker-compose.yml" ]] || validate_failed="missing docker-compose.yml"
 
 if [[ -n "$validate_failed" ]]; then
@@ -284,6 +285,8 @@ rsync -a \
   --exclude 'update-packages/' \
   --exclude 'update-staging/' \
   --exclude '.git/' \
+  --exclude 'tools/license-generator/keys/' \
+  --exclude 'tools/license-generator/.env' \
   --exclude 'node_modules/' \
   --exclude '.next/' \
   "$INNER/" "$ROOT/"
@@ -317,9 +320,22 @@ log_audit "database_migration_started" "true" "__NULL__" "{}"
 if command -v docker >/dev/null 2>&1; then
   docker compose -f "$ROOT/docker-compose.yml" up -d db 2>/dev/null || true
   sleep 5
-  if ! docker compose -f "$ROOT/docker-compose.yml" run --rm app npx prisma migrate deploy; then
+  if ! docker compose -f "$ROOT/docker-compose.yml" exec -T db psql -U "$PG_USER" -d "$PG_DB" -v ON_ERROR_STOP=1 \
+    -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"; then
+    MIGRATE_FAILED="yes"
+    log_audit "update_failed" "false" "pg_trgm_extension_failed" "$(jq -n --arg bp "$BACKUP_PATH" '{backupPath:$bp}')"
+  fi
+  if [[ "$MIGRATE_FAILED" != "yes" ]] && ! docker compose -f "$ROOT/docker-compose.yml" run --rm --entrypoint npx app prisma migrate deploy; then
     MIGRATE_FAILED="yes"
     log_audit "update_failed" "false" "prisma_migrate_deploy_failed" "$(jq -n --arg bp "$BACKUP_PATH" '{backupPath:$bp}')"
+  fi
+  if [[ "$MIGRATE_FAILED" != "yes" ]] && ! docker compose -f "$ROOT/docker-compose.yml" run --rm --entrypoint node \
+    -e DEFAULT_ADMIN_EMAIL="${DEFAULT_ADMIN_EMAIL:-}" \
+    -e DEFAULT_ADMIN_NAME="${DEFAULT_ADMIN_NAME:-}" \
+    -e DEFAULT_ADMIN_PASSWORD="${DEFAULT_ADMIN_PASSWORD:-}" \
+    app /app/scripts/seed-admin.cjs; then
+    MIGRATE_FAILED="yes"
+    log_audit "update_failed" "false" "seed_admin_failed" "$(jq -n --arg bp "$BACKUP_PATH" '{backupPath:$bp}')"
   fi
 fi
 

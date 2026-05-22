@@ -23,6 +23,7 @@
 # misc
 .DS_Store
 *.pem
+!config/license-public-key.pem
 tools/license-generator/.env
 tools/license-generator/keys/
 

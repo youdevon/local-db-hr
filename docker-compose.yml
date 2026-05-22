@@ -33,11 +33,19 @@ services:
     environment:
       TZ: America/Port_of_Spain
       NODE_ENV: production
-      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-v0.13.0-beta}
+      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-v0.13.1-beta}
       DATABASE_URL: postgresql://${POSTGRES_USER:-local_db_hr_user}:${POSTGRES_PASSWORD:-change_this_password}@db:5432/${POSTGRES_DB:-local_db_hr}?schema=public
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-local_db_hr}
+      POSTGRES_USER: ${POSTGRES_USER:-local_db_hr_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_this_password}
       AUTH_SECRET: ${AUTH_SECRET:-change_this_auth_secret}
       SESSION_SECRET: ${SESSION_SECRET:-local-db-hr-session-secret-2026-minimum-32chars}
-      LICENSE_PUBLIC_KEY_PEM: ${LICENSE_PUBLIC_KEY_PEM}
+      LICENSE_PUBLIC_KEY_PEM: ${LICENSE_PUBLIC_KEY_PEM:-}
+      DEFAULT_ADMIN_EMAIL: ${DEFAULT_ADMIN_EMAIL:-admin@local-db-hr.local}
+      DEFAULT_ADMIN_NAME: ${DEFAULT_ADMIN_NAME:-System Administrator}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-}
       EMAIL_SETTINGS_ENCRYPTION_KEY: ${EMAIL_SETTINGS_ENCRYPTION_KEY}
       APP_URL: ${APP_URL:-http://localhost:3000}
       BRANDING_UPLOAD_DIR: /app/public/uploads/branding
