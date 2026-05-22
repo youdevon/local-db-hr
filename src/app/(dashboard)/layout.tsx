@@ -1,9 +1,11 @@
 import { redirect } from "next/navigation";
 
 import { AppShell } from "@/components/app-shell";
+import { DatabaseSetupError } from "@/components/database-setup-error";
 import { getSession } from "@/lib/get-session";
 import { getLicenseStatus, type LicenseStatus } from "@/lib/license";
 import type { SidebarLicenseIndicator } from "@/components/sidebar-footer-tray";
+import { getDatabaseSetupStatus } from "@/lib/server/database-setup";
 import { LOGIN_SESSION_EXPIRED_HREF } from "@/lib/session";
 import { isViewerRole, normalizeUserRole } from "@/lib/roles";
 
@@ -21,26 +23,35 @@ export default async function DashboardGroupLayout({
   const viewOnly = isViewerRole(session.user.role);
   const role = normalizeUserRole(session.user.role);
   const canOpenLicenseSettings = role === "administrator";
+  const setupStatus = await getDatabaseSetupStatus();
 
   let licenseIndicator: SidebarLicenseIndicator | null = null;
-  if (role !== "member") {
-    const license = await getLicenseStatus();
-    const { text, fullText, tone } = getSidebarLicenseBadge(license.status, {
-      daysRemaining: license.daysRemaining,
-      clockTamperDetected: license.clockTamperDetected,
-    });
+  if (role !== "member" && setupStatus.ready) {
+    try {
+      const license = await getLicenseStatus();
+      const { text, fullText, tone } = getSidebarLicenseBadge(license.status, {
+        daysRemaining: license.daysRemaining,
+        clockTamperDetected: license.clockTamperDetected,
+      });
 
-    licenseIndicator = {
-      href: canOpenLicenseSettings ? "/settings/license" : null,
-      text,
-      fullText,
-      tone,
-    };
+      licenseIndicator = {
+        href: canOpenLicenseSettings ? "/settings/license" : null,
+        text,
+        fullText,
+        tone,
+      };
+    } catch {
+      // Database may be partially initialized; setup banner covers the user-facing message.
+    }
   }
 
   return (
     <AppShell user={session.user} viewOnly={viewOnly} licenseIndicator={licenseIndicator}>
-      {children}
+      {setupStatus.ready ? (
+        children
+      ) : (
+        <DatabaseSetupError message={setupStatus.message} details={setupStatus.details} />
+      )}
     </AppShell>
   );
 }

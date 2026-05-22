@@ -62,6 +62,8 @@ export function LicenseSettingsForm({ license, providerControlsEnabled, installe
       notifySuccess(result.message);
       setSignedKeyInput("");
       router.refresh();
+    } catch {
+      notifyError("Licence activation failed. Check server logs and database setup, then try again.");
     } finally {
       setSaving(false);
     }

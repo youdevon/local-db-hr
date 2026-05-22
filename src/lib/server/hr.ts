@@ -1,5 +1,10 @@
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import {
+  assertEmployeesTableReady,
+  DatabaseSetupError,
+  isMissingEmployeesTableError,
+} from "@/lib/server/database-setup";
 import type {
   EmployeeAddressRow,
   EmployeeDocumentRow,
@@ -286,6 +291,7 @@ function mapEmployee(row: EmployeeWithRelations): EmployeeRecord {
 
 export async function getEmployeesForUi(): Promise<EmployeeRecord[]> {
   try {
+    await assertEmployeesTableReady();
     const rows = await prisma.employees.findMany({
       include: {
         employee_addresses: true,
@@ -299,7 +305,14 @@ export async function getEmployeesForUi(): Promise<EmployeeRecord[]> {
       orderBy: [{ created_at: "desc" }, { updated_at: "desc" }, { last_name: "asc" }, { first_name: "asc" }],
     });
     return rows.map((row) => mapEmployee(row));
-  } catch {
+  } catch (error) {
+    if (error instanceof DatabaseSetupError || isMissingEmployeesTableError(error)) {
+      throw error instanceof DatabaseSetupError
+        ? error
+        : new DatabaseSetupError(
+            "The HR database schema is not ready. Run database migrations and restore a backup before using the application.",
+          );
+    }
     return [];
   }
 }

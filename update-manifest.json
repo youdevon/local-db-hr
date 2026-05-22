@@ -1,21 +1,18 @@
 {
   "appName": "Local DB HR",
-  "latestVersion": "0.13.0-beta",
-  "releaseTag": "v0.13.0-beta",
-  "releaseDate": "2026-05-20",
+  "latestVersion": "0.13.1-beta",
+  "releaseTag": "v0.13.1-beta",
+  "releaseDate": "2026-05-22",
   "updateChannel": "beta",
   "minimumSupportedVersion": "0.11.0-beta",
   "requiresDatabaseMigration": true,
   "requiresDockerRebuild": true,
-  "releaseUrl": "https://github.com/youdevon/local-db-hr/releases/tag/v0.13.0-beta",
-  "downloadUrl": "https://github.com/youdevon/local-db-hr/archive/refs/tags/v0.13.0-beta.zip",
+  "releaseUrl": "https://github.com/youdevon/local-db-hr/releases/tag/v0.13.1-beta",
+  "downloadUrl": "https://github.com/youdevon/local-db-hr/archive/refs/tags/v0.13.1-beta.zip",
   "notes": [
-    "Release v0.13.0-beta.",
-    "Added Note Monitor module for Executive Council and Secretary note/minute tracking.",
-    "Added searchable note registry with yearly numbering per note type.",
-    "Added note detail/edit views with field-level edit history.",
-    "Added Global Settings page for manual note numbering sequence control.",
-    "Integrated contract creation with Note Monitor dropdowns (no manual minute entry).",
-    "Added audit logging for note records and numbering setting changes."
+    "Release v0.13.1-beta.",
+    "Show a clear database setup error when the employees table is missing instead of crashing dashboard pages.",
+    "Surface licence activation errors via toast when app_settings ON CONFLICT fails (missing setting_key unique index).",
+    "Added scripts/validate-install.sh (npm run validate:install) to verify LICENSE_PUBLIC_KEY_PEM, pg_trgm, app_settings uniqueness, employees table, admin user, and Prisma migration status."
   ]
 }
