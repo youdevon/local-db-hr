@@ -280,7 +280,7 @@ model employee_identifications {
   employee_id          String    @db.Uuid
   id_type              String
   id_number            String
-  normalized_id_number String?   @unique(map: "unique_global_identification_number") @default(dbgenerated("upper(regexp_replace(id_number, '[^A-Za-z0-9]'::text, ''::text, 'g'::text))"))
+  normalized_id_number String?   @unique(map: "unique_global_identification_number")
   issuing_country      String?   @default("Trinidad and Tobago")
   issue_date           DateTime? @db.Date
   expiry_date          DateTime? @db.Date
