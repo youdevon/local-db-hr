@@ -22,34 +22,49 @@
 
 ## 3. First-time installation
 
-Copy `.env.docker.example` to `.env.docker`.
-
-Windows:
-
-```powershell
-copy .env.docker.example .env.docker
-```
-
-Linux/macOS:
+Copy `.env.docker.example` to `.env` (or use the install script):
 
 ```bash
-cp .env.docker.example .env.docker
+chmod +x scripts/install.sh scripts/ensure-env-license-key.sh
+./scripts/install.sh
 ```
+
+Manual setup:
+
+```bash
+cp .env.docker.example .env
+bash scripts/ensure-env-license-key.sh
+docker compose --env-file .env up -d --build
+```
+
+On first start the app container will:
+
+1. Wait for PostgreSQL to become healthy
+2. Run `CREATE EXTENSION IF NOT EXISTS pg_trgm`
+3. Run `prisma migrate deploy`
+4. Seed the default administrator when none exists
+5. Start the web application
+
+If `DEFAULT_ADMIN_PASSWORD` is left blank, a secure temporary password is printed once in the app container logs.
 
 ## 4. Environment setup
 
-Edit `.env.docker` and set secure values for:
+Edit `.env` and set secure values for:
 
 - `POSTGRES_PASSWORD`
 - `AUTH_SECRET`
+- `SESSION_SECRET`
 - `APP_URL`
+- `DEFAULT_ADMIN_EMAIL` / `DEFAULT_ADMIN_PASSWORD` (optional; temp password generated when blank)
 
-Do not commit or share `.env.docker`.
+`LICENSE_PUBLIC_KEY_PEM` is the product public key only (never the private signing key). Install scripts fill it from `config/license-public-key.pem` when blank.
+
+Do not commit or share `.env`.
 
 ## 5. Start the system
 
 ```bash
-docker compose --env-file .env.docker up -d --build
+docker compose --env-file .env up -d --build
 ```
 
 Check services:

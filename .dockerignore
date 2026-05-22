@@ -6,10 +6,10 @@ node_modules
 .env.development
 .git
 .gitignore
-Dockerfile
-docker-compose.yml
 database/backup/*.dump
 database/backup/*.sql
 npm-debug.log
 README-INSTALL.md
 *.zip
+tools/license-generator/keys/
+tools/license-generator/.env
